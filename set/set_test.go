@@ -59,6 +59,43 @@ func TestStringSliceInsert(t *testing.T) {
 	}
 }
 
+func TestInterfaceInsert(t *testing.T) {
+	var a []string
+	for i, s := range uniq {
+		j, ok := Insert(&a, s, func(i int) bool { return a[i] >= s })
+		if !ok {
+			t.Fatalf("Insert(uniq[%v]) failed", i)
+		}
+		if i != j {
+			t.Fatalf("Insert(uniq[%v]) inserted at %v", i, j)
+		}
+		if !sort.StringsAreSorted(a) {
+			t.Fatal("sort.StringsAreSorted returned false")
+		}
+	}
+	if have, want := len(a), len(uniq); have != want {
+		t.Fatalf("Unexpected len after inserts; have %v, want %v.", have, want)
+	}
+
+	type w struct {
+		s string
+		f func(float64) float64
+	}
+	var b []w
+	for i, s := range dups {
+		j, ok := Insert(&b, w{s: s}, func(i int) bool { return b[i].s >= s })
+		if dupit(i) && ok {
+			t.Fatalf("Inserted at %v when expecting dup at %v.", j, i)
+		}
+		if !sort.SliceIsSorted(b, func(i, j int) bool { return b[i].s < b[j].s }) {
+			t.Fatal("sort.SliceIsSorted returned false")
+		}
+	}
+	if have, want := len(b), N/2; have != want {
+		t.Fatalf("Unexpected len after dup inserts; have %v, want %v.", have, want)
+	}
+}
+
 func BenchmarkStringSliceFilter(b *testing.B) {
 	z := make([]string, len(dups))
 	copy(z, dups)
@@ -91,6 +128,16 @@ func BenchmarkStringSliceInsertDups(b *testing.B) {
 		var a StringSlice
 		for _, s := range dups {
 			a.Insert(s)
+		}
+	}
+}
+
+func BenchmarkInterfaceInsertDups(b *testing.B) {
+	b.ReportAllocs()
+	for n := 0; n < b.N; n++ {
+		var a []string
+		for _, s := range dups {
+			Insert(&a, s, func(i int) bool { return a[i] >= s })
 		}
 	}
 }
