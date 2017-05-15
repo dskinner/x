@@ -1,4 +1,4 @@
-// Package trigram provides types for string indexing and matching.
+// Package trigram provides string indexing and matching.
 package trigram
 
 import (
@@ -11,10 +11,12 @@ import (
 
 // Set indexer; zero value is valid.
 type Set struct {
-	// Mapping function used when calling Parse or defaults to IsSpaceDigitLetterToLower if not set.
+	// Mapping function used when calling Parse
+	// or defaults to IsSpaceDigitLetterToLower if not set.
 	Mapping func(rune) rune
 
-	// Fields function used when calling Parse or defaults to unicode.IsSpace if not set.
+	// Fields function used when calling Parse
+	// or defaults to unicode.IsSpace if not set.
 	Fields func(rune) bool
 
 	ks set.StringSlice
