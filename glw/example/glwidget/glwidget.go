@@ -114,6 +114,8 @@ func (w *GLWidget) Layout(t *theme.Theme) {
 	w.ctx.Enable(gl.BLEND)
 	w.ctx.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 	w.ctx.ClearColor(glw.RGBA(t.Palette.Background()))
+
+	w.Model.Update()
 	w.Color.Set(glw.Vec4(glw.RGBA(t.Palette.Accent())))
 
 	if size := w.Rect.Size(); size != w.MeasuredSize && size != image.ZP {
@@ -137,8 +139,6 @@ func (w *GLWidget) PaintBase(ctx *node.PaintBaseContext, origin image.Point) err
 	}
 
 	w.ctx.Clear(gl.COLOR_BUFFER_BIT)
-	w.Model.Update()
-	w.Color.Update()
 	w.VertexInd.Draw(gl.TRIANGLES)
 
 	if w.useFrameBuffer {

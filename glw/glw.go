@@ -272,6 +272,7 @@ func (u *U4fv) Step(now time.Time) {
 	if !u.a.Step(now) {
 		u.a.Cancel()
 	}
+	u.Update()
 }
 
 type U9fv gl.Uniform
@@ -321,6 +322,7 @@ func (u *U16fv) Step(now time.Time) {
 	if !u.a.Step(now) {
 		u.a.Cancel()
 	}
+	u.Update()
 }
 
 func (u U16fv) String() string { return string16fv(u.m) }
