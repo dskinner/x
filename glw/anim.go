@@ -13,9 +13,9 @@ func ExpDecay(t float64) float64 {
 }
 
 type Transformer interface {
-	ScaleAt(f32.Vec3)
-	ScaleBy(f32.Vec3)
-	ScaleTo(f32.Vec3)
+	ScaleAt(f32.Vec4)
+	ScaleBy(f32.Vec4)
+	ScaleTo(f32.Vec4)
 	TranslateAt(f32.Vec4)
 	TranslateBy(f32.Vec4)
 	TranslateTo(f32.Vec4)
@@ -24,15 +24,15 @@ type Transformer interface {
 	RotateTo(angle float32, axis f32.Vec3)
 }
 
-func ScaleAt(v f32.Vec3) func(Transformer) {
+func ScaleAt(v f32.Vec4) func(Transformer) {
 	return func(a Transformer) { a.ScaleAt(v) }
 }
 
-func ScaleBy(v f32.Vec3) func(Transformer) {
+func ScaleBy(v f32.Vec4) func(Transformer) {
 	return func(a Transformer) { a.ScaleBy(v) }
 }
 
-func ScaleTo(v f32.Vec3) func(Transformer) {
+func ScaleTo(v f32.Vec4) func(Transformer) {
 	return func(a Transformer) { a.ScaleTo(v) }
 }
 
@@ -60,19 +60,22 @@ func RotateTo(angle float32, axis f32.Vec3) func(Transformer) {
 	return func(a Transformer) { a.RotateTo(angle, axis) }
 }
 
+// zt is zero-value of transform
+var zt = transformIdent()
+
 type transform struct {
-	scale     f32.Vec3
+	scale     f32.Vec4
 	translate f32.Vec4
 	rotate    f32.Vec4
 }
 
 func transformIdent() transform {
-	return transform{scale: f32.Vec3{1, 1, 1}, rotate: f32.Vec4{1, 0, 0, 0}}
+	return transform{scale: f32.Vec4{1, 1, 1, 1}, rotate: f32.Vec4{1, 0, 0, 0}}
 }
 
 func (a transform) lerp(b transform, t float32) transform {
 	return transform{
-		scale:     lerp3fv(a.scale, b.scale, t),
+		scale:     lerp4fv(a.scale, b.scale, t),
 		translate: lerp4fv(a.translate, b.translate, t),
 		rotate:    lerp4fv(a.rotate, b.rotate, t),
 	}
@@ -86,12 +89,15 @@ func (a transform) eval16fv() f32.Mat4 {
 }
 
 func (a transform) eval4fv() f32.Vec4 {
-	// TODO scale and rotate?
-	return a.translate
+	return quatmul(a.rotate, f32.Vec4{
+		a.translate[0] * a.scale[0],
+		a.translate[1] * a.scale[1],
+		a.translate[2] * a.scale[2],
+		a.translate[3] * a.scale[3],
+	})
 }
 
 func (a transform) eval3fv() f32.Vec3 {
-	// TODO scale and rotate? drop w?
 	v := a.eval4fv()
 	return f32.Vec3{v[0], v[1], v[2]}
 }
@@ -106,7 +112,11 @@ type Animator interface {
 
 	Notify(*uint32)
 
-	Transform(...func(Transformer))
+	Start(transforms ...func(Transformer))
+
+	Stage(epoch time.Time, transforms ...func(Transformer))
+
+	Step(now time.Time) bool
 
 	Cancel()
 }
@@ -128,27 +138,23 @@ func Notify(p *uint32) func(Animator) {
 }
 
 type animator struct {
-	u16fv      *U16fv
 	at, pt, to transform
 
-	epoch     time.Time
-	tick, dur time.Duration
-	interp    func(float64) float64
+	epoch  time.Time
+	dur    time.Duration
+	interp func(float64) float64
 
-	notify *uint32
-
-	eval func(transform)
-
+	notify    *uint32
+	tick      time.Duration
 	die, done chan struct{}
 }
 
-func newanimator(eval func(transform)) *animator {
+func newanimator() *animator {
 	a := &animator{
-		eval:   eval,
 		at:     transformIdent(),
 		pt:     transformIdent(),
 		to:     transformIdent(),
-		tick:   8 * time.Millisecond,
+		tick:   16 * time.Millisecond,
 		interp: ExpDecay,
 		die:    make(chan struct{}),
 		done:   make(chan struct{}),
@@ -174,9 +180,9 @@ func (a *animator) Interp(fn func(float64) float64) { a.interp = fn }
 
 func (a *animator) Notify(p *uint32) { a.notify = p }
 
-func (a *animator) ScaleAt(v f32.Vec3) { a.at.scale = v }
-func (a *animator) ScaleBy(v f32.Vec3) { a.to.scale = mul3fv(a.to.scale, v) }
-func (a *animator) ScaleTo(v f32.Vec3) { a.to.scale = v }
+func (a *animator) ScaleAt(v f32.Vec4) { a.at.scale = v }
+func (a *animator) ScaleBy(v f32.Vec4) { a.to.scale = mul4fv(a.to.scale, v) }
+func (a *animator) ScaleTo(v f32.Vec4) { a.to.scale = v }
 
 func (a *animator) TranslateAt(v f32.Vec4) { a.at.translate = v }
 func (a *animator) TranslateBy(v f32.Vec4) { a.to.translate = add4fv(a.to.translate, v) }
@@ -189,13 +195,6 @@ func (a *animator) RotateBy(angle float32, axis f32.Vec3) {
 func (a *animator) RotateTo(angle float32, axis f32.Vec3) { a.to.rotate = quat(angle, axis) }
 
 func (a *animator) Cancel() {
-	// if a.die != nil {
-	// close(a.die)
-	// <-a.done
-	// a.die = nil
-	// a.done = nil
-	// }
-
 	select {
 	case <-a.done:
 	default:
@@ -212,23 +211,17 @@ func (a *animator) start() {
 		close(a.done)
 		return
 	}
-
 	ticker := time.NewTicker(a.tick)
 	for {
 		select {
 		case now := <-ticker.C:
-			ok := a.Step(now)
-			if !ok {
+			if !a.Step(now) {
 				ticker.Stop()
-				// a.end()
+				a.end()
 				close(a.done)
 				return
 			}
 		case <-a.die:
-			// TODO rm these since done in Stage now ???
-			a.at = a.pt
-			a.to = a.pt
-
 			ticker.Stop()
 			a.end()
 			close(a.done)
@@ -238,9 +231,6 @@ func (a *animator) start() {
 }
 
 func (a *animator) Step(now time.Time) (ok bool) {
-	if a.notify != nil && atomic.LoadUint32(a.notify) == 0 {
-		return
-	}
 	since := now.Sub(a.epoch)
 	if ok = since < a.dur; ok {
 		delta := float32(a.interp(float64(since) / float64(a.dur)))
@@ -248,44 +238,49 @@ func (a *animator) Step(now time.Time) (ok bool) {
 	} else {
 		a.at = a.to
 		a.pt = a.to
-		a.end()
 	}
 	return ok
 }
 
 func (a *animator) end() {
 	if a.notify != nil {
-		// atomic.AddUint32(a.notify, ^uint32(0))
-		// TODO won't play nice with multiple go routines
-		atomic.CompareAndSwapUint32(a.notify, 1, 0)
+		atomic.AddUint32(a.notify, ^uint32(0))
 	}
 }
 
-func (a *animator) Stage(epoch time.Time, values ...func(Transformer)) {
-	// a.Cancel()
-	// TODO interferes with multiple go routines
-
-	if a.notify != nil {
-		atomic.CompareAndSwapUint32(a.notify, 0, 1)
-	}
-
-	a.epoch = epoch
-	// TODO for sync to work correctly, best place ???
-	a.at = a.pt
-	a.to = a.pt
-
-	for _, opt := range values {
-		opt(a)
+func (a *animator) listen() {
+	select {
+	case <-a.die:
+		a.end()
+		close(a.done)
 	}
 }
 
-func (a *animator) Transform(values ...func(Transformer)) {
+func (a *animator) stage(epoch time.Time, listen bool, transforms ...func(Transformer)) {
 	if a.notify != nil {
 		atomic.AddUint32(a.notify, 1)
 	}
 	a.Cancel()
-	a.Stage(time.Now(), values...)
 	a.die = make(chan struct{})
 	a.done = make(chan struct{})
+	if listen {
+		go a.listen()
+	}
+
+	a.epoch = epoch
+	a.at = a.pt
+	a.to = a.pt
+
+	for _, opt := range transforms {
+		opt(a)
+	}
+}
+
+func (a *animator) Stage(epoch time.Time, transforms ...func(Transformer)) {
+	a.stage(epoch, true, transforms...)
+}
+
+func (a *animator) Start(transforms ...func(Transformer)) {
+	a.stage(time.Now(), false, transforms...)
 	go a.start()
 }

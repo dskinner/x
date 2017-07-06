@@ -53,13 +53,13 @@ func translate16fv(a f32.Vec4, m f32.Mat4) f32.Mat4 {
 	}, m)
 }
 
-func scale16fv(a f32.Vec3, m f32.Mat4) f32.Mat4 {
-	w, h, d := a[0], a[1], a[2]
+func scale16fv(a f32.Vec4, m f32.Mat4) f32.Mat4 {
+	w, h, d, i := a[0], a[1], a[2], a[3]
 	return mul16fv(f32.Mat4{
 		w, 0, 0, 0,
 		0, h, 0, 0,
 		0, 0, d, 0,
-		0, 0, 0, 1,
+		0, 0, 0, i,
 	}, m)
 }
 
@@ -86,6 +86,10 @@ func add4fv(a, b f32.Vec4) f32.Vec4 {
 
 func mul3fv(a, b f32.Vec3) f32.Vec3 {
 	return f32.Vec3{a[0] * b[0], a[1] * b[1], a[2] * b[2]}
+}
+
+func mul4fv(a, b f32.Vec4) f32.Vec4 {
+	return f32.Vec4{a[0] * b[0], a[1] * b[1], a[2] * b[2], a[3] * b[3]}
 }
 
 func quat(angle float32, axis f32.Vec3) f32.Vec4 {

@@ -253,22 +253,26 @@ func (u *U4fv) Set(v f32.Vec4) {
 	if u.a != nil {
 		u.a.pt.translate = v
 	}
-	// u.v = v
-	u.Update()
+	u.v = v
+	ctx.Uniform4fv(u.Uniform, u.v[:])
 }
 
 func (u *U4fv) Animator(options ...func(Animator)) Animator {
 	if u.a == nil {
-		u.a = newanimator(func(t transform) { u.v = t.eval4fv() })
+		u.a = newanimator()
 	}
 	u.a.apply(options...)
 	return u.a
 }
 
-func (u *U4fv) Transform(values ...func(Transformer)) { u.Animator().Transform(values...) }
+func (u *U4fv) Transform(transforms ...func(Transformer)) { u.Animator().Start(transforms...) }
 
 func (u *U4fv) Stage(epoch time.Time, values ...func(Transformer)) { u.a.Stage(epoch, values...) }
-func (u *U4fv) Step(now time.Time)                                 { u.a.Step(now) }
+func (u *U4fv) Step(now time.Time) {
+	if !u.a.Step(now) {
+		u.a.Cancel()
+	}
+}
 
 type U9fv gl.Uniform
 
@@ -294,6 +298,7 @@ func (u U16fv) Update() {
 
 func (u *U16fv) Set(m f32.Mat4) {
 	u.m = m
+	ctx.UniformMatrix4fv(u.Uniform, u.m[:])
 }
 
 func (u *U16fv) Ortho(l, r float32, b, t float32, n, f float32) {
@@ -303,16 +308,20 @@ func (u *U16fv) Ortho(l, r float32, b, t float32, n, f float32) {
 
 func (u *U16fv) Animator(options ...func(Animator)) Animator {
 	if u.a == nil {
-		u.a = newanimator(func(t transform) { u.m = t.eval16fv() })
+		u.a = newanimator()
 	}
 	u.a.apply(options...)
 	return u.a
 }
 
-func (u *U16fv) Transform(values ...func(Transformer)) { u.Animator().Transform(values...) }
+func (u *U16fv) Transform(transforms ...func(Transformer)) { u.Animator().Start(transforms...) }
 
 func (u *U16fv) Stage(epoch time.Time, values ...func(Transformer)) { u.a.Stage(epoch, values...) }
-func (u *U16fv) Step(now time.Time)                                 { u.a.Step(now) }
+func (u *U16fv) Step(now time.Time) {
+	if !u.a.Step(now) {
+		u.a.Cancel()
+	}
+}
 
 func (u U16fv) String() string { return string16fv(u.m) }
 
