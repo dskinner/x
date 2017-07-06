@@ -1,5 +1,3 @@
-// +build ignore
-
 package main
 
 import (
@@ -21,6 +19,12 @@ import (
 	"golang.org/x/mobile/gl"
 )
 
+var (
+	fps       int
+	now       = time.Now()
+	lastpaint = now
+)
+
 func init() {
 	log.SetFlags(0)
 	log.SetPrefix("mobile: ")
@@ -29,10 +33,15 @@ func init() {
 func main() {
 	app.Main(func(a app.App) {
 		w := &GLWidget{}
+		go func() {
+			for range time.Tick(500 * time.Millisecond) {
+				log.Printf("%v FPS\n", fps)
+			}
+		}()
+		var lastTouch touch.Event
 		for e := range a.Events() {
 			switch e := a.Filter(e).(type) {
 			case lifecycle.Event:
-				log.Println(e)
 				w.OnLifecycleEvent(e)
 				a.Send(paint.Event{})
 			case size.Event:
@@ -41,11 +50,25 @@ func main() {
 				if w.ctx == nil || e.External {
 					continue
 				}
+				now = time.Now()
 				w.Paint()
 				a.Publish()
 				a.Send(paint.Event{})
+				fps = int(time.Second / now.Sub(lastpaint))
+				lastpaint = now
 			case touch.Event, key.Event:
-				w.OnInputEvent(e)
+				switch e := e.(type) {
+				case touch.Event:
+					e.X = float32(int(e.X))
+					e.Y = float32(int(e.Y))
+					if e != lastTouch {
+						// w.OnInputEvent(e)
+						w.lastTouch = e
+					}
+					lastTouch = e
+				default:
+					w.OnInputEvent(e)
+				}
 			}
 		}
 	})
@@ -65,6 +88,7 @@ type GLWidget struct {
 	VertexInd glw.UintBuffer
 
 	animating uint32
+	lastTouch touch.Event
 }
 
 func (w *GLWidget) OnLifecycleEvent(e lifecycle.Event) {
@@ -114,9 +138,17 @@ func (w *GLWidget) OnSizeEvent(e size.Event) {
 
 func (w *GLWidget) Paint() {
 	w.ctx.Clear(gl.COLOR_BUFFER_BIT)
+	w.Model.Step(now)
 	w.Model.Update()
+	w.Color.Step(now)
 	w.Color.Update()
 	w.VertexInd.Draw(gl.TRIANGLES)
+
+	var e touch.Event
+	e, w.lastTouch = w.lastTouch, touch.Event{}
+	if e != (touch.Event{}) {
+		w.OnInputEvent(e)
+	}
 }
 
 func (w *GLWidget) InvCoords(ex, ey float32) (x, y float32) {
@@ -127,9 +159,9 @@ func (w *GLWidget) OnInputEvent(ev interface{}) {
 	switch ev := ev.(type) {
 	case touch.Event:
 		x, y := w.InvCoords(ev.X, ev.Y)
-		w.Model.Transform(glw.TranslateTo(f32.Vec4{x, y, 0, 0}))
-		g := float32(uint8(ev.X)) / 255
-		w.Color.Transform(glw.TranslateTo(f32.Vec4{1, g, 0, 1}))
+		w.Model.Stage(now, glw.TranslateTo(f32.Vec4{x, y, 0, 0}))
+		g := float32(uint8(ev.X/10)) / 255
+		w.Color.Stage(now, glw.TranslateTo(f32.Vec4{1, g, 0, 1}))
 	case key.Event:
 		if ev.Code == key.CodeEscape {
 			os.Exit(0)

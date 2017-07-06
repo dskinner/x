@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"time"
 
 	"golang.org/x/image/math/f32"
 	"golang.org/x/mobile/asset"
@@ -241,9 +242,20 @@ type U4fv struct {
 	a *animator
 }
 
-func (u U4fv) Update() { ctx.Uniform4fv(u.Uniform, u.v[:]) }
+func (u U4fv) Update() {
+	if u.a != nil {
+		u.v = u.a.pt.eval4fv()
+	}
+	ctx.Uniform4fv(u.Uniform, u.v[:])
+}
 
-func (u *U4fv) Set(v f32.Vec4) { u.v = v; u.Update() }
+func (u *U4fv) Set(v f32.Vec4) {
+	if u.a != nil {
+		u.a.pt.translate = v
+	}
+	// u.v = v
+	u.Update()
+}
 
 func (u *U4fv) Animator(options ...func(Animator)) Animator {
 	if u.a == nil {
@@ -254,6 +266,9 @@ func (u *U4fv) Animator(options ...func(Animator)) Animator {
 }
 
 func (u *U4fv) Transform(values ...func(Transformer)) { u.Animator().Transform(values...) }
+
+func (u *U4fv) Stage(epoch time.Time, values ...func(Transformer)) { u.a.Stage(epoch, values...) }
+func (u *U4fv) Step(now time.Time)                                 { u.a.Step(now) }
 
 type U9fv gl.Uniform
 
@@ -270,7 +285,12 @@ func (u U16fv) Inv2f(nx, ny float32) (float32, float32) {
 	return nx*m[0] + ny*m[1], nx*m[4] + ny*m[5]
 }
 
-func (u U16fv) Update() { ctx.UniformMatrix4fv(u.Uniform, u.m[:]) }
+func (u U16fv) Update() {
+	if u.a != nil {
+		u.m = u.a.pt.eval16fv()
+	}
+	ctx.UniformMatrix4fv(u.Uniform, u.m[:])
+}
 
 func (u *U16fv) Set(m f32.Mat4) {
 	u.m = m
@@ -290,6 +310,9 @@ func (u *U16fv) Animator(options ...func(Animator)) Animator {
 }
 
 func (u *U16fv) Transform(values ...func(Transformer)) { u.Animator().Transform(values...) }
+
+func (u *U16fv) Stage(epoch time.Time, values ...func(Transformer)) { u.a.Stage(epoch, values...) }
+func (u *U16fv) Step(now time.Time)                                 { u.a.Step(now) }
 
 func (u U16fv) String() string { return string16fv(u.m) }
 

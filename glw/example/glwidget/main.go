@@ -61,6 +61,11 @@ func main() {
 	})
 }
 
+var (
+	now       = time.Now()
+	lastpaint = now
+)
+
 type GLWidget struct {
 	node.LeafEmbed
 	ctx gl.Context
@@ -76,6 +81,7 @@ type GLWidget struct {
 	VertexInd glw.UintBuffer
 
 	animating uint32
+	egesture  gesture.Event
 }
 
 func NewGLWidget() *GLWidget {
@@ -101,6 +107,7 @@ func NewGLWidget() *GLWidget {
 	}
 	w.Color.Animator(opts...)
 	w.Model.Animator(opts...)
+
 	return w
 }
 
@@ -133,14 +140,38 @@ func (w *GLWidget) Layout(t *theme.Theme) {
 
 func (w *GLWidget) PaintBase(ctx *node.PaintBaseContext, origin image.Point) error {
 	w.Marks.UnmarkNeedsPaintBase()
-	if w.animating != 0 {
-		w.Mark(node.MarkNeedsPaintBase)
-	}
+
+	// handle paint
+	now = time.Now()
+
 	w.ctx.Clear(gl.COLOR_BUFFER_BIT)
+	w.Model.Step(now)
 	w.Model.Update()
+	w.Color.Step(now)
 	w.Color.Update()
 	w.VertexInd.Draw(gl.TRIANGLES)
 	draw.Draw(ctx.Dst, w.Rect.Add(origin), w.buf.RGBA(), image.ZP, draw.Over)
+
+	lastpaint = now
+
+	// handle gesture
+	if w.animating != 0 { // check before Stage in-case last frame
+		w.Mark(node.MarkNeedsPaintBase)
+	}
+
+	if w.egesture != (gesture.Event{}) {
+		var ev gesture.Event
+		ev, w.egesture = w.egesture, gesture.Event{}
+		x, y := w.InvCoords(ev.CurrentPos.X, ev.CurrentPos.Y)
+		w.Model.Stage(now, glw.TranslateTo(f32.Vec4{x, y, 0, 0}))
+		g := float32(uint8(ev.CurrentPos.X)) / 255
+		w.Color.Stage(now, glw.TranslateTo(f32.Vec4{1, g, 0, 1}))
+	}
+
+	if w.animating != 0 { // check after Stage in-case first frame
+		w.Mark(node.MarkNeedsPaintBase)
+	}
+
 	return nil
 }
 
@@ -151,10 +182,7 @@ func (w *GLWidget) InvCoords(ex, ey float32) (x, y float32) {
 func (w *GLWidget) OnInputEvent(ev interface{}, origin image.Point) node.EventHandled {
 	switch ev := ev.(type) {
 	case gesture.Event:
-		x, y := w.InvCoords(ev.CurrentPos.X, ev.CurrentPos.Y)
-		w.Model.Transform(glw.TranslateTo(f32.Vec4{x, y, 0, 0}))
-		g := float32(uint8(ev.CurrentPos.X)) / 255
-		w.Color.Transform(glw.TranslateTo(f32.Vec4{1, g, 0, 1}))
+		w.egesture = ev
 		w.Mark(node.MarkNeedsPaintBase)
 		return node.Handled
 	case key.Event:
@@ -207,7 +235,6 @@ func RunWindow(s screen.Screen, root node.Node, opts *widget.RunWindowOptions) e
 	var que struct {
 		sync.Mutex
 		sync.Cond
-		esize  *size.Event
 		epaint *paint.Event
 		es     []interface{}
 	}
@@ -219,10 +246,6 @@ func RunWindow(s screen.Screen, root node.Node, opts *widget.RunWindowOptions) e
 		for {
 			if n := len(que.es); n > 0 {
 				e, que.es = que.es[0], que.es[1:]
-				return e
-			}
-			if que.esize != nil {
-				e, que.esize = *que.esize, nil
 				return e
 			}
 			if que.epaint != nil {
@@ -242,8 +265,6 @@ func RunWindow(s screen.Screen, root node.Node, opts *widget.RunWindowOptions) e
 			}
 			que.Lock()
 			switch e := e.(type) {
-			case size.Event:
-				que.esize = &e
 			case paint.Event:
 				que.epaint = &e
 			default:
@@ -254,6 +275,7 @@ func RunWindow(s screen.Screen, root node.Node, opts *widget.RunWindowOptions) e
 		}
 	}()
 
+	var esize size.Event
 	paintPending := false
 	for {
 		switch e := nextEvent().(type) {
@@ -270,6 +292,24 @@ func RunWindow(s screen.Screen, root node.Node, opts *widget.RunWindowOptions) e
 			root.OnInputEvent(e, image.Point{})
 
 		case paint.Event:
+			if esize != (size.Event{}) {
+				var ev size.Event
+				ev, esize = esize, size.Event{}
+				if dpi := float64(ev.PixelsPerPt) * unit.PointsPerInch; dpi != t.GetDPI() {
+					newT := new(theme.Theme)
+					if t != nil {
+						*newT = *t
+					}
+					newT.DPI = dpi
+					t = newT
+				}
+
+				size := ev.Size()
+				root.Measure(t, size.X, size.Y)
+				root.Wrappee().Rect = ev.Bounds()
+				root.Layout(t)
+			}
+
 			ctx := &node.PaintContext{
 				Theme:  t,
 				Screen: s,
@@ -286,19 +326,8 @@ func RunWindow(s screen.Screen, root node.Node, opts *widget.RunWindowOptions) e
 			paintPending = false
 
 		case size.Event:
-			if dpi := float64(e.PixelsPerPt) * unit.PointsPerInch; dpi != t.GetDPI() {
-				newT := new(theme.Theme)
-				if t != nil {
-					*newT = *t
-				}
-				newT.DPI = dpi
-				t = newT
-			}
-
-			size := e.Size()
-			root.Measure(t, size.X, size.Y)
-			root.Wrappee().Rect = e.Bounds()
-			root.Layout(t)
+			esize = e
+			w.Send(paint.Event{})
 
 		case error:
 			return e

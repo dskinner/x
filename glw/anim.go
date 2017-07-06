@@ -128,10 +128,10 @@ func Notify(p *uint32) func(Animator) {
 }
 
 type animator struct {
-	u16fv  *U16fv
-	at, to transform
-	delta  float32
+	u16fv      *U16fv
+	at, pt, to transform
 
+	epoch     time.Time
 	tick, dur time.Duration
 	interp    func(float64) float64
 
@@ -143,12 +143,19 @@ type animator struct {
 }
 
 func newanimator(eval func(transform)) *animator {
-	return &animator{
+	a := &animator{
 		eval:   eval,
 		at:     transformIdent(),
-		tick:   16 * time.Millisecond,
+		pt:     transformIdent(),
+		to:     transformIdent(),
+		tick:   8 * time.Millisecond,
 		interp: ExpDecay,
+		die:    make(chan struct{}),
+		done:   make(chan struct{}),
 	}
+	close(a.die)
+	close(a.done)
+	return a
 }
 
 func (a *animator) apply(options ...func(Animator)) {
@@ -182,56 +189,93 @@ func (a *animator) RotateBy(angle float32, axis f32.Vec3) {
 func (a *animator) RotateTo(angle float32, axis f32.Vec3) { a.to.rotate = quat(angle, axis) }
 
 func (a *animator) Cancel() {
-	if a.die != nil {
+	// if a.die != nil {
+	// close(a.die)
+	// <-a.done
+	// a.die = nil
+	// a.done = nil
+	// }
+
+	select {
+	case <-a.done:
+	default:
 		close(a.die)
 		<-a.done
-		a.die = nil
-		a.done = nil
 	}
 }
 
 func (a *animator) start() {
 	if a.dur == 0 {
-		a.end(a.to)
+		a.at = a.to
+		a.pt = a.to
+		a.end()
 		close(a.done)
 		return
 	}
 
-	start := time.Now()
 	ticker := time.NewTicker(a.tick)
 	for {
 		select {
 		case now := <-ticker.C:
-			since := now.Sub(start)
-			if since < a.dur {
-				a.delta = float32(a.interp(float64(since) / float64(a.dur)))
-				a.update(a.at.lerp(a.to, a.delta))
-			} else {
-				a.end(a.to)
+			ok := a.Step(now)
+			if !ok {
 				ticker.Stop()
+				// a.end()
 				close(a.done)
 				return
 			}
 		case <-a.die:
-			a.end(a.at.lerp(a.to, a.delta))
+			// TODO rm these since done in Stage now ???
+			a.at = a.pt
+			a.to = a.pt
+
 			ticker.Stop()
+			a.end()
 			close(a.done)
 			return
 		}
 	}
 }
 
-func (a *animator) update(t transform) {
-	if a.eval != nil {
-		a.eval(t)
+func (a *animator) Step(now time.Time) (ok bool) {
+	if a.notify != nil && atomic.LoadUint32(a.notify) == 0 {
+		return
+	}
+	since := now.Sub(a.epoch)
+	if ok = since < a.dur; ok {
+		delta := float32(a.interp(float64(since) / float64(a.dur)))
+		a.pt = a.at.lerp(a.to, delta)
+	} else {
+		a.at = a.to
+		a.pt = a.to
+		a.end()
+	}
+	return ok
+}
+
+func (a *animator) end() {
+	if a.notify != nil {
+		// atomic.AddUint32(a.notify, ^uint32(0))
+		// TODO won't play nice with multiple go routines
+		atomic.CompareAndSwapUint32(a.notify, 1, 0)
 	}
 }
 
-func (a *animator) end(t transform) {
-	a.update(t)
-	a.at = t
+func (a *animator) Stage(epoch time.Time, values ...func(Transformer)) {
+	// a.Cancel()
+	// TODO interferes with multiple go routines
+
 	if a.notify != nil {
-		atomic.AddUint32(a.notify, ^uint32(0))
+		atomic.CompareAndSwapUint32(a.notify, 0, 1)
+	}
+
+	a.epoch = epoch
+	// TODO for sync to work correctly, best place ???
+	a.at = a.pt
+	a.to = a.pt
+
+	for _, opt := range values {
+		opt(a)
 	}
 }
 
@@ -240,12 +284,8 @@ func (a *animator) Transform(values ...func(Transformer)) {
 		atomic.AddUint32(a.notify, 1)
 	}
 	a.Cancel()
+	a.Stage(time.Now(), values...)
 	a.die = make(chan struct{})
 	a.done = make(chan struct{})
-	a.delta = 0
-	a.to = a.at
-	for _, opt := range values {
-		opt(a)
-	}
 	go a.start()
 }
