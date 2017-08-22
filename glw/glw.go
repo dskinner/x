@@ -55,15 +55,15 @@ func must(err error) {
 	}
 }
 
-func mustOpen(name string) asset.File {
+func MustOpen(name string) asset.File {
 	f, err := asset.Open(name)
 	must(err)
 	return f
 }
 
-// mustReadAll reads from assets.
-func mustReadAll(name string) []byte {
-	b, err := ioutil.ReadAll(mustOpen(name))
+// MustReadAll reads from assets.
+func MustReadAll(name string) []byte {
+	b, err := ioutil.ReadAll(MustOpen(name))
 	must(err)
 	return b
 }
@@ -115,11 +115,11 @@ func (src FragSrc) Compile() (gl.Shader, error) { return compile(gl.FRAGMENT_SHA
 
 type VertAsset string
 
-func (name VertAsset) Source() VertSrc { return VertSrc(mustReadAll(string(name))) }
+func (name VertAsset) Source() VertSrc { return VertSrc(MustReadAll(string(name))) }
 
 type FragAsset string
 
-func (name FragAsset) Source() FragSrc { return FragSrc(mustReadAll(string(name))) }
+func (name FragAsset) Source() FragSrc { return FragSrc(MustReadAll(string(name))) }
 
 type Program struct{ gl.Program }
 
@@ -161,18 +161,27 @@ func (prg *Program) Build(vsrc VertSrc, fsrc FragSrc) error {
 }
 
 func (prg Program) SetLocations(dst interface{}) {
-	val := reflect.ValueOf(dst).Elem()
+	var val reflect.Value
+	if v, ok := dst.(reflect.Value); ok {
+		val = v
+	} else {
+		val = reflect.ValueOf(dst).Elem()
+	}
 	typ := val.Type()
 	for i := 0; i < val.NumField(); i++ {
 		if f := val.Field(i); f.CanSet() {
 			name := strings.ToLower(typ.Field(i).Name)
 			switch f.Interface().(type) {
+			case gl.Attrib:
+				f.Set(reflect.ValueOf(prg.Attrib(name)))
 			case A2fv:
 				f.Set(reflect.ValueOf(A2fv(prg.Attrib(name))))
 			case A3fv:
 				f.Set(reflect.ValueOf(A3fv(prg.Attrib(name))))
 			case A4fv:
 				f.Set(reflect.ValueOf(A4fv(prg.Attrib(name))))
+			case gl.Uniform:
+				f.Set(reflect.ValueOf(prg.Uniform(name)))
 			case U1i:
 				f.Set(reflect.ValueOf(U1i(prg.Uniform(name))))
 			case U2i:
@@ -193,6 +202,10 @@ func (prg Program) SetLocations(dst interface{}) {
 				f.Set(reflect.ValueOf(U9fv(prg.Uniform(name))))
 			case U16fv:
 				f.Set(reflect.ValueOf(U16fv{prg.Uniform(name), ident16fv(), nil}))
+			default:
+				if f.Kind() == reflect.Struct {
+					prg.SetLocations(f)
+				}
 			}
 		}
 	}
@@ -251,7 +264,7 @@ func (u U4fv) Update() {
 
 func (u *U4fv) Set(v f32.Vec4) {
 	if u.a != nil {
-		u.a.pt.translate = v
+		u.a.pt.Translate = v
 	}
 	u.v = v
 	ctx.Uniform4fv(u.Uniform, u.v[:])
@@ -267,7 +280,9 @@ func (u *U4fv) Animator(options ...func(Animator)) Animator {
 
 func (u *U4fv) Transform(transforms ...func(Transformer)) { u.Animator().Start(transforms...) }
 
-func (u *U4fv) Stage(epoch time.Time, values ...func(Transformer)) { u.a.Stage(epoch, values...) }
+func (u *U4fv) Stage(epoch time.Time, transforms ...func(Transformer)) {
+	u.a.Stage(epoch, transforms...)
+}
 func (u *U4fv) Step(now time.Time) {
 	if !u.a.Step(now) {
 		u.a.Cancel()
@@ -286,8 +301,13 @@ type U16fv struct {
 }
 
 func (u U16fv) Inv2f(nx, ny float32) (float32, float32) {
+	var sx, sy float32 = 1, 1
+	if u.a != nil {
+		sx = 1 / u.a.pt.Scale[0]
+		sy = 1 / u.a.pt.Scale[1]
+	}
 	m := inv16fv(u.m)
-	return nx*m[0] + ny*m[1], nx*m[4] + ny*m[5]
+	return sx*nx*m[0] + ny*m[1], nx*m[4] + sy*ny*m[5]
 }
 
 func (u U16fv) Update() {
@@ -317,7 +337,10 @@ func (u *U16fv) Animator(options ...func(Animator)) Animator {
 
 func (u *U16fv) Transform(transforms ...func(Transformer)) { u.Animator().Start(transforms...) }
 
-func (u *U16fv) Stage(epoch time.Time, values ...func(Transformer)) { u.a.Stage(epoch, values...) }
+func (u *U16fv) Stage(epoch time.Time, transforms ...func(Transformer)) {
+	u.a.Stage(epoch, transforms...)
+}
+
 func (u *U16fv) Step(now time.Time) {
 	if !u.a.Step(now) {
 		u.a.Cancel()
@@ -452,10 +475,9 @@ func (buf *FrameBuffer) Delete() {
 	buf.tex.Delete()
 }
 
-func (buf *FrameBuffer) Attach(width, height int) {
+func (buf *FrameBuffer) Attach() {
 	ctx.BindFramebuffer(gl.FRAMEBUFFER, buf.Framebuffer)
 	buf.tex.Bind()
-	buf.Update(width, height)
 	ctx.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, buf.tex.Texture, 0)
 }
 
@@ -479,7 +501,12 @@ func (buf *FrameBuffer) Update(width, height int) {
 	}
 
 	if grow || groh {
-		buf.tex.Update(&image.RGBA{Stride: buf.maxw * 4, Rect: image.Rect(0, 0, buf.maxw, buf.maxh)})
+		src := &image.RGBA{Stride: buf.maxw * 4, Rect: image.Rect(0, 0, buf.maxw, buf.maxh)}
+		if src.Bounds().In(buf.tex.Bounds()) && len(src.Pix) > 0 {
+			buf.tex.DrawSrc(src)
+		} else {
+			buf.tex.Upload(src)
+		}
 	}
 }
 
@@ -543,15 +570,22 @@ func (tex Texture) Bind() {
 
 func (tex Texture) Unbind() { ctx.BindTexture(gl.TEXTURE_2D, gl.Texture{0}) }
 
-func (tex *Texture) Update(src *image.RGBA) {
+func (tex *Texture) Upload(src *image.RGBA) {
+	tex.r = src.Bounds()
+	ctx.TexImage2D(gl.TEXTURE_2D, tex.lod, tex.r.Dx(), tex.r.Dy(), gl.RGBA, gl.UNSIGNED_BYTE, src.Pix)
+}
+
+func (tex *Texture) DrawSrc(src *image.RGBA) {
 	r := src.Bounds()
-	switch {
-	case r.In(tex.r) && len(src.Pix) > 0:
-		ctx.TexSubImage2D(gl.TEXTURE_2D, tex.lod, r.Min.X, r.Min.Y, r.Dx(), r.Dy(), gl.RGBA, gl.UNSIGNED_BYTE, src.Pix)
-	default:
-		ctx.TexImage2D(gl.TEXTURE_2D, tex.lod, r.Dx(), r.Dy(), gl.RGBA, gl.UNSIGNED_BYTE, src.Pix)
-		tex.r = r
-	}
+	ctx.TexSubImage2D(gl.TEXTURE_2D, tex.lod, r.Min.X, r.Min.Y, r.Dx(), r.Dy(), gl.RGBA, gl.UNSIGNED_BYTE, src.Pix)
 }
 
 func (tex Texture) GenerateMipmap() { ctx.GenerateMipmap(gl.TEXTURE_2D) }
+
+func (tex Texture) ColorModel() color.Model { return color.RGBAModel }
+func (tex Texture) Bounds() image.Rectangle { return tex.r }
+func (tex Texture) At(x, y int) color.Color {
+	pix := make([]uint8, 4)
+	ctx.ReadPixels(pix, x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE)
+	return color.RGBA{pix[0], pix[1], pix[2], pix[3]}
+}

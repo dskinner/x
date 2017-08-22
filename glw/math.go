@@ -29,7 +29,28 @@ func Ortho(l, r float32, b, t float32, n, f float32) f32.Mat4 {
 	}
 }
 
-// ident16fv returns identity matrix.
+func quat(angle float32, axis f32.Vec3) f32.Vec4 {
+	c, s := float32(math.Cos(float64(angle/2))), float32(math.Sin(float64(angle/2)))
+	return f32.Vec4{c, axis[0] * s, axis[1] * s, axis[2] * s}
+}
+
+func quat16fv(q f32.Vec4) f32.Mat4 {
+	w, x, y, z := q[0], q[1], q[2], q[3]
+	return mul16fv(
+		f32.Mat4{
+			+w, +z, -y, -x,
+			-z, +w, +x, -y,
+			+y, -x, +w, -z,
+			+x, +y, +z, +w,
+		},
+		f32.Mat4{
+			+w, -z, +y, -x,
+			+z, +w, -x, -y,
+			-y, +x, +w, -z,
+			+x, +y, +z, +w,
+		})
+}
+
 func ident16fv() f32.Mat4 {
 	return f32.Mat4{
 		1, 0, 0, 0,
@@ -37,10 +58,6 @@ func ident16fv() f32.Mat4 {
 		0, 0, 1, 0,
 		0, 0, 0, 1,
 	}
-}
-
-func rotate16fv(quat f32.Vec4, m f32.Mat4) f32.Mat4 {
-	return mul16fv(quat16fv(quat), m)
 }
 
 func translate16fv(a f32.Vec4, m f32.Mat4) f32.Mat4 {
@@ -51,6 +68,10 @@ func translate16fv(a f32.Vec4, m f32.Mat4) f32.Mat4 {
 		0, 0, 1, z,
 		0, 0, 0, 1,
 	}, m)
+}
+
+func rotate16fv(quat f32.Vec4, m f32.Mat4) f32.Mat4 {
+	return mul16fv(quat16fv(quat), m)
 }
 
 func scale16fv(a f32.Vec4, m f32.Mat4) f32.Mat4 {
@@ -92,35 +113,13 @@ func mul4fv(a, b f32.Vec4) f32.Vec4 {
 	return f32.Vec4{a[0] * b[0], a[1] * b[1], a[2] * b[2], a[3] * b[3]}
 }
 
-func quat(angle float32, axis f32.Vec3) f32.Vec4 {
-	c, s := float32(math.Cos(float64(angle/2))), float32(math.Sin(float64(angle/2)))
-	return f32.Vec4{c, axis[0] * s, axis[1] * s, axis[2] * s}
-}
-
-func quatmul(a, b f32.Vec4) f32.Vec4 {
+func mulquat(a, b f32.Vec4) f32.Vec4 {
 	return f32.Vec4{
 		a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
 		a[2]*b[3] - b[2]*a[3] + a[0]*b[1] + b[0]*a[1],
 		b[1]*a[3] - a[1]*b[3] + a[0]*b[2] + b[0]*a[2],
 		a[1]*b[2] - b[1]*a[2] + a[0]*b[3] + b[0]*a[3],
 	}
-}
-
-func quat16fv(q f32.Vec4) f32.Mat4 {
-	w, x, y, z := q[0], q[1], q[2], q[3]
-	return mul16fv(
-		f32.Mat4{
-			+w, +z, -y, -x,
-			-z, +w, +x, -y,
-			+y, -x, +w, -z,
-			+x, +y, +z, +w,
-		},
-		f32.Mat4{
-			+w, -z, +y, -x,
-			+z, +w, -x, -y,
-			-y, +x, +w, -z,
-			+x, +y, +z, +w,
-		})
 }
 
 func mul9fv(a, b f32.Mat3) (m f32.Mat3) {

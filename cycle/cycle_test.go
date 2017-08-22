@@ -40,7 +40,7 @@ func load(i int) []uint8 {
 
 func TestCycle(t *testing.T) {
 	read := func(pool *Pool) (p [][]uint8) {
-		pool.Do(pool.Left(), 1, func(i int) { p = append(p, pool.get(i)) })
+		pool.Do(pool.o.l, 1, func(i int) { p = append(p, pool.get(i)) })
 		return p
 	}
 
@@ -90,6 +90,26 @@ func TestCycle(t *testing.T) {
 	}
 }
 
+func TestDiff(t *testing.T) {
+	type diff struct {
+		pro
+		dl, dr int
+	}
+	diffs := []diff{
+		// l < r
+		diff{pro: pro{l: 0, i: 1, r: 2, n: 3}, dl: 1, dr: 1},
+		diff{pro: pro{l: 10, i: 15, r: 20, n: 40}, dl: 5, dr: 5},
+		// r < l
+		diff{pro: pro{l: 20, i: 25, r: 10, n: 40}, dl: 5, dr: 25},
+		diff{pro: pro{l: 20, i: 5, r: 10, n: 40}, dl: 25, dr: 5},
+	}
+	for _, o := range diffs {
+		if dl, dr := o.diff(o.i); dl != o.dl && dr != o.dr {
+			t.Errorf("unexpected diff: have %v, %v; want %v, %v", dl, dr, o.dl, o.dr)
+		}
+	}
+}
+
 func TestVerify(t *testing.T) {
 	var pros []pro
 
@@ -102,7 +122,7 @@ func TestVerify(t *testing.T) {
 		err := o.verify()
 		if err == nil {
 			t.Errorf("err == nil for %+v", o)
-		} else if !strings.HasPrefix(err.Error(), "l < r") {
+		} else if !strings.HasPrefix(err.Error(), "for l < r") {
 			t.Errorf("wrong err for %+v: %s", o, err)
 		}
 	}
@@ -115,7 +135,7 @@ func TestVerify(t *testing.T) {
 		err := o.verify()
 		if err == nil {
 			t.Errorf("err == nil for %+v", o)
-		} else if !strings.HasPrefix(err.Error(), "r < l") {
+		} else if !strings.HasPrefix(err.Error(), "for r < l") {
 			t.Errorf("wrong err for %+v: %s", o, err)
 		}
 	}

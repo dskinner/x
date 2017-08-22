@@ -2,7 +2,9 @@
 // Beyond what a modulo provides, this allows for the cycling of a projection and an index independently.
 package cycle
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // R is a total cyclic order relation, maintaining a left,right projection and a tracked index, both of which may cycle independent of each other.
 type R struct {
@@ -24,39 +26,29 @@ func New(z, i, nsubset, nset int) (*R, error) {
 	return &R{o: o, n: nsubset, z: -z}, nil
 }
 
-// Index returns index of parent set.
-func (r *R) Index() int { return r.o.i }
-
 // Left returns left projection index of parent set. Due to totality, left > right is possible.
 func (r *R) Left() int { return r.o.l }
 
 // Right returns right projection index of parent set. Due to totality, right < left is possible.
 func (r *R) Right() int { return r.o.r }
 
+// Index returns absolute index of parent set.
+func (r *R) Index() int { return r.o.i }
+
 // Diff returns absolute difference of index to left and right projections.
-func (r *R) Diff(i int) (il, ir int) {
-	if r.o.l < r.o.r {
-		return pmod(i-r.o.l, r.o.n), pmod(r.o.r-i, r.o.n)
-	}
-	if i >= r.o.l && i >= r.o.r {
-		return pmod(i-r.o.l, r.o.n), pmod(r.o.n-i+r.o.r, r.o.n)
-	}
-	if i <= r.o.l && i <= r.o.r {
-		return pmod(r.o.n-r.o.l+i, r.o.n), pmod(r.o.r-i, r.o.n)
-	}
-	panic("this shouldn't happen")
-}
+func (r *R) Diff(i int) (dl, dr int) { return r.o.diff(i) }
 
 // Map an index for parent set to subset.
 func (r *R) Map(i int) int {
-	i, _ = r.Diff(i)
-	return pmod(i-r.z, r.n)
+	dl, _ := r.o.diff(i)
+	return pmod(dl-r.z, r.n)
 }
 
 // Cycle projection and index, return offset index along stride.
 func (r *R) Cycle(sp, si int) (i, s int, err error) {
 	o := r.o // copy
 	o.l, o.i, o.r = pmod(o.l+sp, o.n), pmod(o.i+si, o.n), pmod(o.r+sp, o.n)
+
 	if err := o.verify(); err != nil {
 		return 0, 0, err
 	}
@@ -96,13 +88,25 @@ type pro struct{ l, i, r, n int }
 // verify non-strict totality.
 func (o pro) verify() error {
 	if o.l < o.r && !(o.l <= o.i && o.i <= o.r) {
-		return fmt.Errorf("l < r expects l < i < r but %v < %v < %v", o.l, o.i, o.r)
+		return fmt.Errorf("for l < r then l < i < r but %v < %v < %v", o.l, o.i, o.r)
 	}
-	if o.r < o.l && !((o.i <= o.r && o.i <= o.l) || (o.i >= o.r && o.i >= o.l)) {
-		return fmt.Errorf("r < l expects i ≷ l,r but %v ≹ %v,%v", o.i, o.l, o.r)
+	if o.r < o.l && !((o.l >= o.i && o.i <= o.r) || (o.l <= o.i && o.i >= o.r)) {
+		return fmt.Errorf("for r < l then l > i < r or l < i > r but %v %s %v %s %v", o.l, equality(o.l, o.i), o.i, equality(o.i, o.r), o.r)
 	}
 	return nil
 }
 
+// diff returns absolute difference of index to left and right projections.
+func (o pro) diff(i int) (dl, dr int) {
+	return pmod(o.n+i-o.l, o.n), pmod(o.n-i+o.r, o.n)
+}
+
 // pmod returns positive modulo for inputs.
 func pmod(x, n int) int { return (x%n + n) % n }
+
+func equality(a, b int) string {
+	if a <= b {
+		return "<"
+	}
+	return ">"
+}

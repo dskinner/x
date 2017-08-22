@@ -1,11 +1,12 @@
 package set
 
 import (
+	"math/rand"
 	"sort"
 	"testing"
 )
 
-const N = 1000
+const N, L = 100000, 100
 
 var uniq, dups []string
 
@@ -13,28 +14,28 @@ func init() {
 	uniq, dups = make([]string, N), make([]string, N)
 	for i := 0; i < N; i++ {
 		var s string
-		for j := i; j < i+N; j++ {
+		for j := i; j < i+L; j++ {
 			s += string(rune(j))
 		}
 		uniq[i] = s
-		if dupit(i) {
+		if i%2 != 0 {
 			s = uniq[i-1]
 		}
 		dups[i] = s
 	}
-}
 
-func dupit(i int) bool { return i%2 != 0 }
+	for i, j := range rand.Perm(N) {
+		uniq[i], uniq[j] = uniq[j], uniq[i]
+		dups[i], dups[j] = dups[j], dups[i]
+	}
+}
 
 func TestStringSliceInsert(t *testing.T) {
 	var a StringSlice
 	for i, s := range uniq {
-		j, ok := a.Insert(s)
+		_, ok := a.Insert(s)
 		if !ok {
 			t.Fatalf("Insert(uniq[%v]) failed", i)
-		}
-		if i != j {
-			t.Fatalf("Insert(uniq[%v]) inserted at %v", i, j)
 		}
 		if !sort.StringsAreSorted(a) {
 			t.Fatal("sort.StringsAreSorted returned false")
@@ -45,11 +46,8 @@ func TestStringSliceInsert(t *testing.T) {
 	}
 
 	var b StringSlice
-	for i, s := range dups {
-		j, ok := b.Insert(s)
-		if dupit(i) && ok {
-			t.Fatalf("Inserted at %v when expecting dup at %v.", j, i)
-		}
+	for _, s := range dups {
+		_, _ = b.Insert(s)
 		if !sort.StringsAreSorted(b) {
 			t.Fatal("sort.StringsAreSorted returned false")
 		}
@@ -59,15 +57,12 @@ func TestStringSliceInsert(t *testing.T) {
 	}
 }
 
-func TestInterfaceInsert(t *testing.T) {
+func TestReflectInsert(t *testing.T) {
 	var a []string
 	for i, s := range uniq {
-		j, ok := Insert(&a, s, func(i int) bool { return a[i] >= s })
+		_, ok := Insert(&a, s, func(i int) bool { return a[i] >= s })
 		if !ok {
 			t.Fatalf("Insert(uniq[%v]) failed", i)
-		}
-		if i != j {
-			t.Fatalf("Insert(uniq[%v]) inserted at %v", i, j)
 		}
 		if !sort.StringsAreSorted(a) {
 			t.Fatal("sort.StringsAreSorted returned false")
@@ -82,11 +77,8 @@ func TestInterfaceInsert(t *testing.T) {
 		f func(float64) float64
 	}
 	var b []w
-	for i, s := range dups {
-		j, ok := Insert(&b, w{s: s}, func(i int) bool { return b[i].s >= s })
-		if dupit(i) && ok {
-			t.Fatalf("Inserted at %v when expecting dup at %v.", j, i)
-		}
+	for _, s := range dups {
+		_, _ = Insert(&b, w{s: s}, func(i int) bool { return b[i].s >= s })
 		if !sort.SliceIsSorted(b, func(i, j int) bool { return b[i].s < b[j].s }) {
 			t.Fatal("sort.SliceIsSorted returned false")
 		}
@@ -96,24 +88,7 @@ func TestInterfaceInsert(t *testing.T) {
 	}
 }
 
-func BenchmarkStringSliceFilter(b *testing.B) {
-	z := make([]string, len(dups))
-	copy(z, dups)
-	a := StringSlice(z[:0])
-
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for _, x := range z {
-		a.Insert(x)
-	}
-	if len(a) != N/2 {
-		b.Fail()
-	}
-}
-
-func BenchmarkStringSliceInsertUniq(b *testing.B) {
-	b.ReportAllocs()
+func BenchmarkUniq_String_Slice(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		var a StringSlice
 		for _, s := range uniq {
@@ -122,8 +97,7 @@ func BenchmarkStringSliceInsertUniq(b *testing.B) {
 	}
 }
 
-func BenchmarkStringSliceInsertDups(b *testing.B) {
-	b.ReportAllocs()
+func BenchmarkDups_String_Slice(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		var a StringSlice
 		for _, s := range dups {
@@ -132,32 +106,58 @@ func BenchmarkStringSliceInsertDups(b *testing.B) {
 	}
 }
 
-func BenchmarkInterfaceInsertDups(b *testing.B) {
-	b.ReportAllocs()
+func BenchmarkUniq_String_Wacky(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		var a StringSlice
+		for _, s := range uniq {
+			a = append(a, s)
+		}
+		a.Filter()
+	}
+}
+
+func BenchmarkDups_String_Wacky(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		var a StringSlice
+		for _, s := range dups {
+			a = append(a, s)
+		}
+		a.Filter()
+	}
+}
+
+func BenchmarkUniq_String_Map(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		m := make(map[string]struct{})
+		for _, s := range uniq {
+			m[s] = struct{}{}
+		}
+	}
+}
+
+func BenchmarkDups_String_Map(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		m := make(map[string]struct{})
+		for _, s := range dups {
+			m[s] = struct{}{}
+		}
+	}
+}
+
+func BenchmarkUniq_Reflect(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		var a []string
-		for _, s := range dups {
+		for _, s := range uniq {
 			Insert(&a, s, func(i int) bool { return a[i] >= s })
 		}
 	}
 }
 
-func BenchmarkMapStringInsertUniq(b *testing.B) {
-	b.ReportAllocs()
+func BenchmarkDups_Reflect(b *testing.B) {
 	for n := 0; n < b.N; n++ {
-		m := make(map[string]struct{})
-		for _, s := range uniq {
-			m[s] = struct{}{}
-		}
-	}
-}
-
-func BenchmarkMapStringInsertDups(b *testing.B) {
-	b.ReportAllocs()
-	for n := 0; n < b.N; n++ {
-		m := make(map[string]struct{})
+		var a []string
 		for _, s := range dups {
-			m[s] = struct{}{}
+			Insert(&a, s, func(i int) bool { return a[i] >= s })
 		}
 	}
 }

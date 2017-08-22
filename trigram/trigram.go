@@ -20,7 +20,7 @@ type Set struct {
 	Fields func(rune) bool
 
 	ks set.StringSlice
-	vs []set.StringSlice
+	vs set.StringChain
 }
 
 // Index parses and stores trigrams for each s in xs. Panics if nil.
@@ -33,13 +33,8 @@ func (a *Set) Index(xs ...string) {
 	}
 	for _, s := range xs {
 		for _, t := range Parse(s, a.Mapping, a.Fields) {
-			i, ok := 0, false
-			if i, ok = a.ks.Insert(t); ok {
-				a.vs = append(a.vs, nil)
-				copy(a.vs[i+1:], a.vs[i:])
-				a.vs[i] = nil
-			}
-			a.vs[i].Insert(s)
+			i, ok := a.ks.Insert(t)
+			a.vs.Upsert(s, i, ok)
 		}
 	}
 }

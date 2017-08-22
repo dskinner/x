@@ -14,7 +14,10 @@ import (
 	"image"
 	"image/draw"
 	"os"
+	"sync"
 	"time"
+
+	_ "image/jpeg"
 
 	"dasa.cc/x/glw"
 	"golang.org/x/exp/shiny/gesture"
@@ -49,15 +52,15 @@ type GLWidget struct {
 
 	prg glw.Program
 
-	Proj      glw.U16fv
-	Model     glw.U16fv
-	Color     glw.U4fv
-	Vertex    glw.A3fv
-	VertexBuf glw.FloatBuffer
-	VertexInd glw.UintBuffer
+	Proj  glw.U16fv
+	Model glw.U16fv
+
+	Vertex  Vertex
+	Texture Texture
 
 	animating uint32
 	evg       gesture.Event
+	state     state
 }
 
 func NewGLWidget(ctx gl.Context, useFrameBuffer bool) *GLWidget {
@@ -73,34 +76,30 @@ func (w *GLWidget) OnLifecycleEvent(e lifecycle.Event) {
 	switch e.Crosses(lifecycle.StageVisible) {
 	case lifecycle.CrossOn:
 		if w.useFrameBuffer {
+			// TODO factor out frame buffer into type like widget.Sheet that contains a GLWidget
 			w.buf.Create()
-			w.buf.Attach(0, 0)
+			w.buf.Attach()
 		}
+
 		w.prg.MustBuild(vsrc, fsrc)
 		w.prg.SetLocations(w)
 		w.prg.Use()
+		w.Texture.Bind()
+		w.Vertex.Bind()
 
-		w.VertexBuf.Create(gl.STATIC_DRAW, []float32{
-			-0.2, -0.2, 0,
-			-0.2, +0.2, 0,
-			+0.2, +0.2, 0,
-			+0.2, -0.2, 0})
-		w.VertexInd.Create(gl.STATIC_DRAW, []uint32{0, 1, 2, 0, 2, 3})
-		w.Vertex.Pointer()
+		w.Texture.Upload(mustDecodeAsset("fancygopher.jpg"))
 
-		opts := []func(glw.Animator){
-			glw.Duration(750 * time.Millisecond),
+		w.Model.Animator(
+			glw.Duration(250*time.Millisecond),
 			glw.Notify(&w.animating),
-		}
-		w.Color.Animator(opts...)
-		w.Model.Animator(opts...)
+		)
 	case lifecycle.CrossOff:
 		if w.useFrameBuffer {
 			w.buf.Detach()
 			w.buf.Delete()
 		}
-		w.VertexInd.Delete()
-		w.VertexBuf.Delete()
+		w.Texture.Delete()
+		w.Vertex.Delete()
 		w.prg.Delete()
 		w.ctx = nil
 	}
@@ -115,31 +114,37 @@ func (w *GLWidget) Layout(t *theme.Theme) {
 	w.ctx.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 	w.ctx.ClearColor(glw.RGBA(t.Palette.Background()))
 
-	w.Model.Update()
-	w.Color.Set(glw.Vec4(glw.RGBA(t.Palette.Accent())))
-
 	if size := w.Rect.Size(); size != w.MeasuredSize && size != image.ZP {
 		ar := float32(size.X) / float32(size.Y)
 		w.Proj.Ortho(-ar, ar, -1, 1, 1.0, 10.0)
 		if w.useFrameBuffer {
+			w.buf.Attach()
 			w.buf.Update(size.X, size.Y)
 		}
 		w.ctx.Viewport(0, 0, size.X, size.Y)
 		w.Mark(node.MarkNeedsPaintBase)
 	}
+
+	w.Model.Update()
 }
 
 func (w *GLWidget) PaintBase(ctx *node.PaintBaseContext, origin image.Point) error {
-	w.Marks.UnmarkNeedsPaintBase()
 	now := time.Now()
+	w.Marks.UnmarkNeedsPaintBase()
 	if w.animating != 0 {
 		w.Model.Step(now)
-		w.Color.Step(now)
 		w.Mark(node.MarkNeedsPaintBase)
 	}
 
+	if w.useFrameBuffer {
+		w.buf.Attach()
+	}
+
 	w.ctx.Clear(gl.COLOR_BUFFER_BIT)
-	w.VertexInd.Draw(gl.TRIANGLES)
+
+	w.Texture.Bind()
+	w.Vertex.Bind()
+	w.Vertex.Draw(gl.TRIANGLES)
 
 	if w.useFrameBuffer {
 		// TODO support for gomobile example
@@ -147,12 +152,16 @@ func (w *GLWidget) PaintBase(ctx *node.PaintBaseContext, origin image.Point) err
 	}
 
 	if w.evg != (gesture.Event{}) {
-		x, y := w.Proj.Inv2f(cton(w.evg.CurrentPos.X, w.evg.CurrentPos.Y, w.Rect))
+		x, y := cton(w.evg.CurrentPos.X, w.evg.CurrentPos.Y, w.Rect)
+		x, y = w.Proj.Inv2f(x, y)
+		x, y = w.Model.Inv2f(x, y)
 		w.Model.Stage(now, glw.TranslateTo(f32.Vec4{x, y, 0, 0}))
-		g := float32(uint8(w.evg.CurrentPos.X/10)) / 255
-		b := float32(uint8(w.evg.CurrentPos.Y/10)) / 255
-		w.Color.Stage(now, glw.TranslateTo(f32.Vec4{0, g, b, 1}))
 		w.evg = gesture.Event{}
+		w.Mark(node.MarkNeedsPaintBase)
+	}
+
+	if w.state.active() {
+		w.Model.Stage(now, w.state.transforms()...)
 		w.Mark(node.MarkNeedsPaintBase)
 	}
 
@@ -169,10 +178,141 @@ func (w *GLWidget) OnInputEvent(ev interface{}, origin image.Point) node.EventHa
 		if ev.Code == key.CodeEscape {
 			os.Exit(0)
 		}
-		return node.NotHandled
+		active := ev.Direction != key.DirRelease
+		switch ev.Code {
+		case key.CodeA:
+			w.state.panLeft = active
+		case key.CodeD:
+			w.state.panRight = active
+		case key.CodeW:
+			w.state.panUp = active
+		case key.CodeS:
+			w.state.panDown = active
+		case key.CodeQ:
+			w.state.rotateLeft = active
+		case key.CodeE:
+			w.state.rotateRight = active
+		case key.CodeZ:
+			w.state.scaleUp = active
+		case key.CodeX:
+			w.state.scaleDown = active
+		}
+		w.Mark(node.MarkNeedsPaintBase)
+		return node.Handled
 	default:
 		return node.NotHandled
 	}
+}
+
+type state struct {
+	panLeft, panRight, panUp, panDown bool
+	rotateLeft, rotateRight           bool
+	scaleUp, scaleDown                bool
+}
+
+func (t state) active() bool {
+	return t.panLeft || t.panRight || t.panUp || t.panDown || t.rotateLeft || t.rotateRight || t.scaleUp || t.scaleDown
+}
+
+func (t state) transforms() []func(glw.Transformer) {
+	const x = 0.1
+	var p []func(glw.Transformer)
+	if t.panLeft {
+		p = append(p, glw.TranslateBy(f32.Vec4{-x, 0, 0, 0}))
+	}
+	if t.panRight {
+		p = append(p, glw.TranslateBy(f32.Vec4{+x, 0, 0, 0}))
+	}
+	if t.panUp {
+		p = append(p, glw.TranslateBy(f32.Vec4{0, -x, 0, 0}))
+	}
+	if t.panDown {
+		p = append(p, glw.TranslateBy(f32.Vec4{0, +x, 0, 0}))
+	}
+	if t.rotateLeft {
+		p = append(p, glw.RotateBy(-x, f32.Vec3{0, 0, 1}))
+	}
+	if t.rotateRight {
+		p = append(p, glw.RotateBy(+x, f32.Vec3{0, 0, 1}))
+	}
+	if t.scaleUp {
+		p = append(p, glw.ScaleBy(f32.Vec4{+x, +x, 0, 0}))
+	}
+	if t.scaleDown {
+		p = append(p, glw.ScaleBy(f32.Vec4{-x, -x, 0, 0}))
+	}
+	return p
+}
+
+type Texture struct {
+	glw.Texture
+	Tex         glw.U1i
+	Texcoord    glw.A2fv
+	TexcoordBuf glw.FloatBuffer
+	once        sync.Once
+}
+
+func (t *Texture) Bind() {
+	t.once.Do(func() {
+		t.Texture.Create()
+		t.TexcoordBuf.Create(gl.STATIC_DRAW, []float32{
+			-0, -0,
+			-0, +1,
+			+1, +1,
+			+1, -0})
+	})
+	t.Texture.Bind()
+	t.Tex.Set(int(t.Value - 1))
+	t.TexcoordBuf.Bind()
+	t.Texcoord.Pointer()
+}
+
+func (t *Texture) Delete() {
+	t.Texture.Delete()
+	t.TexcoordBuf.Delete()
+	t.once = sync.Once{}
+}
+
+type Vertex struct {
+	Vertex    glw.A3fv
+	VertexBuf glw.FloatBuffer
+	VertexInd glw.UintBuffer
+	once      sync.Once
+}
+
+func (v *Vertex) Bind() {
+	v.once.Do(func() {
+		v.VertexBuf.Create(gl.STATIC_DRAW, []float32{
+			-1, -1, 0,
+			-1, +1, 0,
+			+1, +1, 0,
+			+1, -1, 0})
+		v.VertexInd.Create(gl.STATIC_DRAW, []uint32{0, 1, 2, 0, 2, 3})
+	})
+	v.VertexBuf.Bind()
+	v.VertexInd.Bind()
+	v.Vertex.Pointer()
+}
+
+func (v *Vertex) Delete() {
+	v.VertexInd.Delete()
+	v.VertexBuf.Delete()
+	v.once = sync.Once{}
+}
+
+func (v Vertex) Draw(mode gl.Enum) { v.VertexInd.Draw(mode) }
+
+func mustDecodeAsset(name string) *image.RGBA {
+	src, _, err := image.Decode(glw.MustOpen(name))
+	if err != nil {
+		panic(err)
+	}
+	if v, ok := src.(*image.RGBA); ok {
+		return v
+	}
+	dst := image.NewRGBA(src.Bounds())
+	draw.Draw(dst, src.Bounds(), src, image.ZP, draw.Src)
+	return dst
 }
 
 const (
@@ -180,14 +320,20 @@ const (
 uniform mat4 proj;
 uniform mat4 model;
 attribute vec4 vertex;
+attribute vec2 texcoord;
+varying vec2 vtexcoord;
 void main() {
-	gl_Position = proj*model*vertex;
+  gl_Position = proj*model*vertex;
+  vtexcoord = texcoord;
 }`
 
 	fsrc = `#version 100
 precision mediump float;
 uniform vec4 color;
+uniform sampler2D tex;
+varying vec2 vtexcoord;
 void main() {
-	gl_FragColor = color;
+  //gl_FragColor = color;
+  gl_FragColor = texture2D(tex, vtexcoord.xy);
 }`
 )
