@@ -1,0 +1,8 @@
+apply plugin: "org.golang.mobile.bind"
+
+gobind {
+    pkg = "dasa.cc/forward"
+    GOPATH = "/home/daniel/local"
+    GO = "/home/daniel/local/go/bin/go"
+    GOMOBILE = "/home/daniel/local/bin/gomobile"
+}

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android">
+  <data>
+    <variable
+      name="state"
+      type="cc.dasa.forward.State"/>
+  </data>
+  <FrameLayout
+    android:id="@+id/content"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <android.support.v7.widget.RecyclerView
+      android:id="@+id/recycler"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"/>
+
+    <android.support.design.widget.FloatingActionButton
+      android:id="@+id/toggle"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_gravity="end|bottom"
+      android:src="@{state.listening() ? @drawable/ic_stop_black_24dp : @drawable/ic_play_arrow_black_24dp}"
+      android:layout_margin="16dp"
+      android:onClick="toggleListening"
+      android:tint="#fff"/>
+
+  </FrameLayout>
+</layout>
