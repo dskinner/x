@@ -1,3 +1,5 @@
+// +build ignore
+
 // Gen generates pkgmap for standard library.
 package main
 

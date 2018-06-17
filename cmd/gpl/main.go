@@ -1,7 +1,6 @@
 //go:generate go run gen.go
 
-// Gopl is an REPL for text/template actions.
-// TODO rename to Gpl.
+// Gpl is an REPL for text/template actions.
 package main
 
 import (
@@ -20,7 +19,7 @@ import (
 	"github.com/chzyer/readline"
 )
 
-var root = template.New("gopl")
+var root = template.New("gpl")
 
 type auto struct{ trigram.Set }
 
@@ -30,13 +29,6 @@ func newauto() *auto {
 		a.Index(name)
 	}
 	return a
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // func (a auto) IsDynamic() bool { return true }
@@ -60,23 +52,31 @@ func (a auto) Do(line []rune, pos int) (newLine [][]rune, offset int) {
 		t := strings.TrimPrefix(s, ln)
 		d := len(s) - len(t)
 		n[i] = float64(d)
-		pos = max(pos, d)
+		if pos < d {
+			pos = d
+		}
 		newLine = append(newLine, []rune(t+"."))
 	}
 
-	return newLine, pos
+	fmt.Println("\n@@@")
+	for _, x := range newLine {
+		fmt.Printf("@@@ %v: %s\n", pos, string(x))
+	}
+	fmt.Println("@@@")
+
+	return newLine, 0
 }
 
 // TODO panic causes terminal issue
 func main() {
-	tmp, err := ioutil.TempFile("", "gopl")
+	tmp, err := ioutil.TempFile("", "gpl")
 	if err != nil {
 		panic(err)
 	}
 	defer os.Remove(tmp.Name())
 
 	rl, err := readline.NewEx(&readline.Config{
-		Prompt:            "gopl: ",
+		Prompt:            ">>> ",
 		HistoryFile:       tmp.Name(),
 		AutoComplete:      newauto(),
 		InterruptPrompt:   "^C",
