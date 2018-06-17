@@ -14,44 +14,31 @@ func ExpDecay(t float64) float64 {
 
 type Transformer interface {
 	To(Transform)
-	ScaleAt(f32.Vec4)
-	ScaleBy(f32.Vec4)
-	ScaleTo(f32.Vec4)
 	TranslateAt(f32.Vec4)
 	TranslateBy(f32.Vec4)
 	TranslateTo(f32.Vec4)
+	ShearAt(f32.Vec4)
+	ShearBy(f32.Vec4)
+	ShearTo(f32.Vec4)
 	RotateAt(angle float32, axis f32.Vec3)
 	RotateBy(angle float32, axis f32.Vec3)
 	RotateTo(angle float32, axis f32.Vec3)
+	ScaleAt(f32.Vec4)
+	ScaleBy(f32.Vec4)
+	ScaleTo(f32.Vec4)
+
+	// TODO ReflectionAt, ReflectionBy, ReflectionTo
 }
 
-func To(t Transform) func(Transformer) {
-	return func(a Transformer) { a.To(t) }
-}
+func To(t Transform) func(Transformer) { return func(a Transformer) { a.To(t) } }
 
-func ScaleAt(v f32.Vec4) func(Transformer) {
-	return func(a Transformer) { a.ScaleAt(v) }
-}
+func TranslateAt(v f32.Vec4) func(Transformer) { return func(a Transformer) { a.TranslateAt(v) } }
+func TranslateBy(v f32.Vec4) func(Transformer) { return func(a Transformer) { a.TranslateBy(v) } }
+func TranslateTo(v f32.Vec4) func(Transformer) { return func(a Transformer) { a.TranslateTo(v) } }
 
-func ScaleBy(v f32.Vec4) func(Transformer) {
-	return func(a Transformer) { a.ScaleBy(v) }
-}
-
-func ScaleTo(v f32.Vec4) func(Transformer) {
-	return func(a Transformer) { a.ScaleTo(v) }
-}
-
-func TranslateAt(v f32.Vec4) func(Transformer) {
-	return func(a Transformer) { a.TranslateAt(v) }
-}
-
-func TranslateBy(v f32.Vec4) func(Transformer) {
-	return func(a Transformer) { a.TranslateBy(v) }
-}
-
-func TranslateTo(v f32.Vec4) func(Transformer) {
-	return func(a Transformer) { a.TranslateTo(v) }
-}
+func ShearAt(v f32.Vec4) func(Transformer) { return func(a Transformer) { a.ShearAt(v) } }
+func ShearBy(v f32.Vec4) func(Transformer) { return func(a Transformer) { a.ShearBy(v) } }
+func ShearTo(v f32.Vec4) func(Transformer) { return func(a Transformer) { a.ShearTo(v) } }
 
 func RotateAt(angle float32, axis f32.Vec3) func(Transformer) {
 	return func(a Transformer) { a.RotateAt(angle, axis) }
@@ -65,61 +52,95 @@ func RotateTo(angle float32, axis f32.Vec3) func(Transformer) {
 	return func(a Transformer) { a.RotateTo(angle, axis) }
 }
 
+func ScaleAt(v f32.Vec4) func(Transformer) { return func(a Transformer) { a.ScaleAt(v) } }
+func ScaleBy(v f32.Vec4) func(Transformer) { return func(a Transformer) { a.ScaleBy(v) } }
+func ScaleTo(v f32.Vec4) func(Transformer) { return func(a Transformer) { a.ScaleTo(v) } }
+
 // TODO actually implement Transformer interface.
 // var _ Transformer = (*Transform)(nil)
 
 // TODO this is essentially type Sheet, but should vectors be tucked behind Transform type ???
 type Transform struct {
 	Translate f32.Vec4
+	Shear     f32.Vec4
 	Rotate    f32.Vec4
 	Scale     f32.Vec4
 }
 
 func TransformIdent() (a Transform) {
-	a.Ident()
-	return
+	return Transform{
+		Translate: f32.Vec4{0, 0, 0, 0},
+		Shear:     f32.Vec4{0, 0, 0, 1},
+		Rotate:    f32.Vec4{1, 0, 0, 0},
+		Scale:     f32.Vec4{1, 1, 1, 1},
+	}
 }
 
-func (a *Transform) Ident() {
-	a.Scale = f32.Vec4{1, 1, 1, 1}
-	a.Translate = f32.Vec4{0, 0, 0, 0}
-	a.Rotate = f32.Vec4{1, 0, 0, 0}
+func (a *Transform) TranslateBy(v f32.Vec4) { a.Translate = add4fv(a.Translate, v) }
+func (a *Transform) TranslateTo(v f32.Vec4) { a.Translate = v }
+
+func (a *Transform) ShearBy(v f32.Vec4) { a.Shear = add4fv(a.Shear, v) }
+func (a *Transform) ShearTo(v f32.Vec4) { a.Shear = v }
+
+func (a *Transform) RotateBy(angle float32, axis f32.Vec3) {
+	a.Rotate = mulquat(a.Rotate, quat(angle, axis))
+}
+
+func (a *Transform) RotateTo(angle float32, axis f32.Vec3) {
+	a.Rotate = quat(angle, axis)
 }
 
 func (a *Transform) ScaleBy(v f32.Vec4) { a.Scale = mul4fv(a.Scale, v) }
 func (a *Transform) ScaleTo(v f32.Vec4) { a.Scale = v }
 
-func (a *Transform) TranslateBy(v f32.Vec4) { a.Translate = add4fv(a.Translate, v) }
-func (a *Transform) TranslateTo(v f32.Vec4) { a.Translate = v }
-
-func (a *Transform) RotateBy(angle float32, axis f32.Vec3) {
-	a.Rotate = mulquat(a.Rotate, quat(angle, axis))
-}
-func (a *Transform) RotateTo(angle float32, axis f32.Vec3) { a.Rotate = quat(angle, axis) }
-
 func (a Transform) lerp(b Transform, t float32) Transform {
 	return Transform{
-		Scale:     lerp4fv(a.Scale, b.Scale, t),
 		Translate: lerp4fv(a.Translate, b.Translate, t),
+		Shear:     lerp4fv(a.Shear, b.Shear, t),
 		Rotate:    lerp4fv(a.Rotate, b.Rotate, t),
+		Scale:     lerp4fv(a.Scale, b.Scale, t),
 	}
 }
 
-func (a Transform) eval16fv() f32.Mat4 {
-	m := translate16fv(a.Translate, ident16fv())
-	m = rotate16fv(a.Rotate, m)
-	m = scale16fv(a.Scale, m)
+func (a Transform) eval16fv() (m f32.Mat4) {
+	t := translationIdent(a.Translate, a.Shear)
+	r := quat16fv(a.Rotate)
+	s := scaleIdent(a.Scale)
+	_, _, _ = t, r, s
+
+	// m = mul16fv(r, s)
+	// m = mul16fv(m, t)
+
+	m = mul16fv(s, r)
+	m = mul16fv(m, t)
+
+	// m = mul16fv(r, t)
+	// m = mul16fv(m, s)
+
 	return m
 }
 
+// TODO confirm a sensible order of operations
 func (a Transform) eval4fv() f32.Vec4 {
 	// return quatmul(a.Rotate, mul4fv(a.Translate, a.Scale))
 	return mul4fv(a.Scale, mulquat(a.Rotate, a.Translate))
 }
 
+// TODO ...
 func (a Transform) eval3fv() f32.Vec3 {
 	v := a.eval4fv()
 	return f32.Vec3{v[0], v[1], v[2]}
+}
+
+// TODO ... ...
+func (a Transform) eval2fv() f32.Vec2 {
+	v := a.eval4fv()
+	return f32.Vec2{v[0], v[1]}
+}
+
+// TODO ... ... ... ugh
+func (a Transform) eval1f() float32 {
+	return a.eval4fv()[0]
 }
 
 type Animator interface {
@@ -143,21 +164,13 @@ type Animator interface {
 	Cancel()
 }
 
-func Tick(d time.Duration) func(Animator) {
-	return func(a Animator) { a.Tick(d) }
-}
+func Tick(d time.Duration) func(Animator) { return func(a Animator) { a.Tick(d) } }
 
-func Duration(d time.Duration) func(Animator) {
-	return func(a Animator) { a.Duration(d) }
-}
+func Duration(d time.Duration) func(Animator) { return func(a Animator) { a.Duration(d) } }
 
-func Interp(fn func(float64) float64) func(Animator) {
-	return func(a Animator) { a.Interp(fn) }
-}
+func Interp(fn func(float64) float64) func(Animator) { return func(a Animator) { a.Interp(fn) } }
 
-func Notify(p *uint32) func(Animator) {
-	return func(a Animator) { a.Notify(p) }
-}
+func Notify(p *uint32) func(Animator) { return func(a Animator) { a.Notify(p) } }
 
 type animator struct {
 	at, pt, to Transform
@@ -205,19 +218,21 @@ func (a *animator) Notify(p *uint32) { a.notify = p }
 func (a *animator) At() Transform  { return a.to }
 func (a *animator) To(t Transform) { a.to = t }
 
-func (a *animator) ScaleAt(v f32.Vec4) { a.at.Scale = v }
-func (a *animator) ScaleBy(v f32.Vec4) { a.to.Scale = mul4fv(a.to.Scale, v) }
-func (a *animator) ScaleTo(v f32.Vec4) { a.to.Scale = v }
+func (a *animator) TranslateAt(v f32.Vec4) { a.at.TranslateTo(v) }
+func (a *animator) TranslateBy(v f32.Vec4) { a.to.TranslateBy(v) }
+func (a *animator) TranslateTo(v f32.Vec4) { a.to.TranslateTo(v) }
 
-func (a *animator) TranslateAt(v f32.Vec4) { a.at.Translate = v }
-func (a *animator) TranslateBy(v f32.Vec4) { a.to.Translate = add4fv(a.to.Translate, v) }
-func (a *animator) TranslateTo(v f32.Vec4) { a.to.Translate = v }
+func (a *animator) ShearAt(v f32.Vec4) { a.at.ShearTo(v) }
+func (a *animator) ShearBy(v f32.Vec4) { a.to.ShearBy(v) }
+func (a *animator) ShearTo(v f32.Vec4) { a.to.ShearTo(v) }
 
-func (a *animator) RotateAt(angle float32, axis f32.Vec3) { a.at.Rotate = quat(angle, axis) }
-func (a *animator) RotateBy(angle float32, axis f32.Vec3) {
-	a.to.Rotate = mulquat(a.to.Rotate, quat(angle, axis))
-}
-func (a *animator) RotateTo(angle float32, axis f32.Vec3) { a.to.Rotate = quat(angle, axis) }
+func (a *animator) RotateAt(angle float32, axis f32.Vec3) { a.at.RotateTo(angle, axis) }
+func (a *animator) RotateBy(angle float32, axis f32.Vec3) { a.to.RotateBy(angle, axis) }
+func (a *animator) RotateTo(angle float32, axis f32.Vec3) { a.to.RotateTo(angle, axis) }
+
+func (a *animator) ScaleAt(v f32.Vec4) { a.at.ScaleTo(v) }
+func (a *animator) ScaleBy(v f32.Vec4) { a.to.ScaleBy(v) }
+func (a *animator) ScaleTo(v f32.Vec4) { a.to.ScaleTo(v) }
 
 func (a *animator) Cancel() {
 	select {

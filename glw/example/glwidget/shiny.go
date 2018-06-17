@@ -3,13 +3,15 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"log"
 
 	"dasa.cc/x/glw"
+	"dasa.cc/x/glw/gesture"
 
 	"golang.org/x/exp/shiny/driver/gldriver"
-	"golang.org/x/exp/shiny/gesture"
+	// "golang.org/x/exp/shiny/gesture"
 	"golang.org/x/exp/shiny/screen"
 	"golang.org/x/exp/shiny/unit"
 	"golang.org/x/exp/shiny/widget"
@@ -84,7 +86,9 @@ func RunWindow(s screen.Screen, root node.Node, opts *widget.RunWindowOptions) e
 	// throttle like this, should it be provided at a lower level?
 	paintPending := false
 
-	gef := gesture.EventFilter{EventDeque: w}
+	// gef := gesture.EventFilter{EventDeque: w}
+	gef := gesture.EventFilter{Send: w.Send}
+
 	for {
 		e := w.NextEvent()
 
@@ -102,8 +106,11 @@ func RunWindow(s screen.Screen, root node.Node, opts *widget.RunWindowOptions) e
 				return nil
 			}
 
-		case gesture.Event, mouse.Event, key.Event:
+		case mouse.Event, key.Event:
 			root.OnInputEvent(e, image.Point{})
+
+		case gesture.Touch, gesture.Drag, gesture.LongPress, gesture.LongPressDrag, gesture.DoubleTouch, gesture.DoubleTouchDrag:
+			root.OnInputEvent(e, image.ZP)
 
 		case paint.Event:
 			if e.External {
@@ -143,6 +150,9 @@ func RunWindow(s screen.Screen, root node.Node, opts *widget.RunWindowOptions) e
 
 		case error:
 			return e
+
+		default:
+			fmt.Printf("%#v\n", e)
 		}
 
 		if !paintPending && root.Wrappee().Marks.NeedsPaint() {

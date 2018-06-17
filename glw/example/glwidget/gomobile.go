@@ -7,8 +7,8 @@ import (
 	"log"
 
 	"dasa.cc/x/glw"
+	"dasa.cc/x/glw/gesture"
 
-	"golang.org/x/exp/shiny/gesture"
 	"golang.org/x/exp/shiny/unit"
 	"golang.org/x/exp/shiny/widget/theme"
 	"golang.org/x/mobile/app"
@@ -33,7 +33,11 @@ func main() {
 	app.Main(func(a app.App) {
 		t := theme.Default
 		root := NewGLWidget(nil, false)
+		gef := gesture.EventFilter{Send: a.Send}
 		for e := range a.Events() {
+			if e = gef.Filter(e); e == nil {
+				continue
+			}
 			switch e := e.(type) {
 			case lifecycle.Event:
 				switch e.Crosses(lifecycle.StageVisible) {
@@ -69,12 +73,9 @@ func main() {
 				a.Publish()
 				a.Send(paint.Event{})
 			case touch.Event, key.Event:
-				switch e := e.(type) {
-				case touch.Event:
-					root.OnInputEvent(gesture.Event{CurrentPos: gesture.Point{X: e.X, Y: e.Y}}, image.ZP)
-				default:
-					root.OnInputEvent(e, image.ZP)
-				}
+				root.OnInputEvent(e, image.ZP)
+			case gesture.Touch, gesture.Drag, gesture.LongPress, gesture.LongPressDrag, gesture.DoubleTouch, gesture.DoubleTouchDrag:
+				root.OnInputEvent(e, image.ZP)
 			}
 		}
 	})

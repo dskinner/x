@@ -2,6 +2,8 @@
 
 // Glwidget app for shiny and gomobile.
 //
+// Build tags are done so to allow running gomobile on desktop for the sake of Windows.
+//
 // Run on desktop:
 //  go run shiny.go glwidget.go
 //  go run gomobile.go glwidget.go
@@ -17,10 +19,10 @@ import (
 	"sync"
 	"time"
 
-	_ "image/jpeg"
+	_ "image/png"
 
 	"dasa.cc/x/glw"
-	"golang.org/x/exp/shiny/gesture"
+	"dasa.cc/x/glw/gesture"
 	"golang.org/x/exp/shiny/materialdesign/colornames"
 	"golang.org/x/exp/shiny/widget/node"
 	"golang.org/x/exp/shiny/widget/theme"
@@ -28,6 +30,13 @@ import (
 	"golang.org/x/mobile/event/key"
 	"golang.org/x/mobile/event/lifecycle"
 	"golang.org/x/mobile/gl"
+)
+
+const (
+	fast    = 250 * time.Millisecond
+	medium  = 350 * time.Millisecond
+	slow    = 750 * time.Millisecond
+	tedious = 2500 * time.Millisecond
 )
 
 func init() {
@@ -55,12 +64,16 @@ type GLWidget struct {
 	Proj  glw.U16fv
 	Model glw.U16fv
 
+	Color  glw.U4fv
+	Radius glw.U1f
+
 	Vertex  Vertex
 	Texture Texture
 
 	animating uint32
-	evg       gesture.Event
-	state     state
+	isCircle  bool
+
+	ge interface{}
 }
 
 func NewGLWidget(ctx gl.Context, useFrameBuffer bool) *GLWidget {
@@ -81,18 +94,16 @@ func (w *GLWidget) OnLifecycleEvent(e lifecycle.Event) {
 			w.buf.Attach()
 		}
 
-		w.prg.MustBuild(vsrc, fsrc)
-		w.prg.SetLocations(w)
+		w.prg.MustBuildAssets("env-vert.glsl", "env-frag.glsl")
+		w.prg.Unmarshal(w)
 		w.prg.Use()
 		w.Texture.Bind()
 		w.Vertex.Bind()
 
-		w.Texture.Upload(mustDecodeAsset("fancygopher.jpg"))
+		w.Texture.Upload(mustDecodeAsset("fancygopher.png"))
 
-		w.Model.Animator(
-			glw.Duration(250*time.Millisecond),
-			glw.Notify(&w.animating),
-		)
+		w.Radius.Animator(glw.Duration(medium))
+		w.Model.Animator(glw.Duration(medium))
 	case lifecycle.CrossOff:
 		if w.useFrameBuffer {
 			w.buf.Detach()
@@ -116,7 +127,7 @@ func (w *GLWidget) Layout(t *theme.Theme) {
 
 	if size := w.Rect.Size(); size != w.MeasuredSize && size != image.ZP {
 		ar := float32(size.X) / float32(size.Y)
-		w.Proj.Ortho(-ar, ar, -1, 1, 1.0, 10.0)
+		w.Proj.Ortho(-ar, ar, -1, 1, 0.0, 10.0)
 		if w.useFrameBuffer {
 			w.buf.Attach()
 			w.buf.Update(size.X, size.Y)
@@ -128,11 +139,20 @@ func (w *GLWidget) Layout(t *theme.Theme) {
 	w.Model.Update()
 }
 
+func (w *GLWidget) TranslateTo(now time.Time, a gesture.Event) {
+	x, y := cton(a.X, a.Y, w.Rect)
+	x, y = w.Proj.Inv2f(x, y)
+	w.Model.Stage(now, glw.TranslateTo(f32.Vec4{x, y, 0, 1}))
+}
+
 func (w *GLWidget) PaintBase(ctx *node.PaintBaseContext, origin image.Point) error {
 	now := time.Now()
 	w.Marks.UnmarkNeedsPaintBase()
-	if w.animating != 0 {
-		w.Model.Step(now)
+
+	if w.Model.Step(now) {
+		w.Mark(node.MarkNeedsPaintBase)
+	}
+	if w.Radius.Step(now) {
 		w.Mark(node.MarkNeedsPaintBase)
 	}
 
@@ -141,6 +161,8 @@ func (w *GLWidget) PaintBase(ctx *node.PaintBaseContext, origin image.Point) err
 	}
 
 	w.ctx.Clear(gl.COLOR_BUFFER_BIT)
+
+	w.Color.Set(glw.Vec4(glw.RGBA(theme.Default.Palette.Accent())))
 
 	w.Texture.Bind()
 	w.Vertex.Bind()
@@ -151,17 +173,48 @@ func (w *GLWidget) PaintBase(ctx *node.PaintBaseContext, origin image.Point) err
 		draw.Draw(ctx.Dst, w.Rect.Add(origin), w.buf.RGBA(), image.ZP, draw.Over)
 	}
 
-	if w.evg != (gesture.Event{}) {
-		x, y := cton(w.evg.CurrentPos.X, w.evg.CurrentPos.Y, w.Rect)
-		x, y = w.Proj.Inv2f(x, y)
-		x, y = w.Model.Inv2f(x, y)
-		w.Model.Stage(now, glw.TranslateTo(f32.Vec4{x, y, 0, 0}))
-		w.evg = gesture.Event{}
-		w.Mark(node.MarkNeedsPaintBase)
-	}
+	var ge interface{}
+	if ge, w.ge = w.ge, nil; ge != nil {
+		switch e := ge.(type) {
+		case gesture.Touch:
+			if last := e[len(e)-1]; last.Type.Has(gesture.TypeFinal) {
+				w.TranslateTo(now, last)
+			}
+		case gesture.Drag:
+			w.TranslateTo(now, e[len(e)-1])
+		case gesture.LongPress:
+			if e[len(e)-1].Type.Has(gesture.TypeFinal) {
+				var x float32
+				if w.isCircle = !w.isCircle; w.isCircle {
+					x = 1
+				}
+				w.Radius.Stage(now, glw.TranslateTo(f32.Vec4{x, 0, 0, 0}))
+			}
+		case gesture.LongPressDrag:
+			ev0, ev1 := e[len(e)-1], e[len(e)-2]
 
-	if w.state.active() {
-		w.Model.Stage(now, w.state.transforms()...)
+			// x0, _ := cton(ev0.X, ev0.Y, w.Rect)
+			// x1, _ := cton(ev1.X, ev1.Y, w.Rect)
+			// angle := 10 * ((1 + x1) - (1 + x0))
+			// w.Model.Stage(now, glw.RotateBy(-angle, f32.Vec3{0, 0, 1}))
+
+			x0, y0 := cton(ev0.X, ev0.Y, w.Rect)
+			x1, y1 := cton(ev1.X, ev1.Y, w.Rect)
+			w.Model.Stage(now, glw.ShearBy(f32.Vec4{5 * (x0 - x1), 5 * (y0 - y1), 0, 1}))
+		case gesture.DoubleTouch:
+			if e[len(e)-1].Type.Has(gesture.TypeFinal) {
+				w.Model.Stage(now, glw.RotateBy(-10, f32.Vec3{0, 0, 1}))
+			}
+		case gesture.DoubleTouchDrag:
+			ev0, ev1 := e[len(e)-1], e[len(e)-2]
+			x0, y0 := cton(ev0.X, ev0.Y, w.Rect)
+			x0, y0 = w.Proj.Inv2f(x0, y0)
+			x1, y1 := cton(ev1.X, ev1.Y, w.Rect)
+			x1, y1 = w.Proj.Inv2f(x1, y1)
+			dx := x0 - x1
+			dy := y0 - y1
+			w.Model.Stage(now, glw.ScaleBy(f32.Vec4{1 + 2*dx, 1 + 2*dy, 1, 1}))
+		}
 		w.Mark(node.MarkNeedsPaintBase)
 	}
 
@@ -170,106 +223,47 @@ func (w *GLWidget) PaintBase(ctx *node.PaintBaseContext, origin image.Point) err
 
 func (w *GLWidget) OnInputEvent(ev interface{}, origin image.Point) node.EventHandled {
 	switch ev := ev.(type) {
-	case gesture.Event:
-		w.evg = ev
+	case gesture.Touch, gesture.Drag, gesture.LongPress, gesture.LongPressDrag, gesture.DoubleTouch, gesture.DoubleTouchDrag:
+		w.ge = ev
 		w.Mark(node.MarkNeedsPaintBase)
 		return node.Handled
 	case key.Event:
 		if ev.Code == key.CodeEscape {
 			os.Exit(0)
+			return node.Handled
 		}
-		active := ev.Direction != key.DirRelease
-		switch ev.Code {
-		case key.CodeA:
-			w.state.panLeft = active
-		case key.CodeD:
-			w.state.panRight = active
-		case key.CodeW:
-			w.state.panUp = active
-		case key.CodeS:
-			w.state.panDown = active
-		case key.CodeQ:
-			w.state.rotateLeft = active
-		case key.CodeE:
-			w.state.rotateRight = active
-		case key.CodeZ:
-			w.state.scaleUp = active
-		case key.CodeX:
-			w.state.scaleDown = active
-		}
-		w.Mark(node.MarkNeedsPaintBase)
-		return node.Handled
+		return node.NotHandled
 	default:
 		return node.NotHandled
 	}
 }
 
-type state struct {
-	panLeft, panRight, panUp, panDown bool
-	rotateLeft, rotateRight           bool
-	scaleUp, scaleDown                bool
-}
-
-func (t state) active() bool {
-	return t.panLeft || t.panRight || t.panUp || t.panDown || t.rotateLeft || t.rotateRight || t.scaleUp || t.scaleDown
-}
-
-func (t state) transforms() []func(glw.Transformer) {
-	const x = 0.1
-	var p []func(glw.Transformer)
-	if t.panLeft {
-		p = append(p, glw.TranslateBy(f32.Vec4{-x, 0, 0, 0}))
-	}
-	if t.panRight {
-		p = append(p, glw.TranslateBy(f32.Vec4{+x, 0, 0, 0}))
-	}
-	if t.panUp {
-		p = append(p, glw.TranslateBy(f32.Vec4{0, -x, 0, 0}))
-	}
-	if t.panDown {
-		p = append(p, glw.TranslateBy(f32.Vec4{0, +x, 0, 0}))
-	}
-	if t.rotateLeft {
-		p = append(p, glw.RotateBy(-x, f32.Vec3{0, 0, 1}))
-	}
-	if t.rotateRight {
-		p = append(p, glw.RotateBy(+x, f32.Vec3{0, 0, 1}))
-	}
-	if t.scaleUp {
-		p = append(p, glw.ScaleBy(f32.Vec4{+x, +x, 0, 0}))
-	}
-	if t.scaleDown {
-		p = append(p, glw.ScaleBy(f32.Vec4{-x, -x, 0, 0}))
-	}
-	return p
-}
-
 type Texture struct {
 	glw.Texture
-	Tex         glw.U1i
-	Texcoord    glw.A2fv
-	TexcoordBuf glw.FloatBuffer
-	once        sync.Once
+	Content         glw.U1i
+	ContentCoord    glw.A2fv
+	ContentCoordBuf glw.FloatBuffer
+	once            sync.Once
 }
 
 func (t *Texture) Bind() {
 	t.once.Do(func() {
 		t.Texture.Create()
-		t.TexcoordBuf.Create(gl.STATIC_DRAW, []float32{
+		t.ContentCoordBuf.Create(gl.STATIC_DRAW, []float32{
 			-0, -0,
 			-0, +1,
 			+1, +1,
 			+1, -0})
 	})
 	t.Texture.Bind()
-	t.Tex.Set(int(t.Value - 1))
-	t.TexcoordBuf.Bind()
-	t.Texcoord.Pointer()
+	t.Content.Set(int(t.Value - 1))
+	t.ContentCoordBuf.Bind()
+	t.ContentCoord.Pointer()
 }
 
 func (t *Texture) Delete() {
 	t.Texture.Delete()
-	t.TexcoordBuf.Delete()
+	t.ContentCoordBuf.Delete()
 	t.once = sync.Once{}
 }
 
@@ -314,26 +308,3 @@ func mustDecodeAsset(name string) *image.RGBA {
 	draw.Draw(dst, src.Bounds(), src, image.ZP, draw.Src)
 	return dst
 }
-
-const (
-	vsrc = `#version 100
-uniform mat4 proj;
-uniform mat4 model;
-attribute vec4 vertex;
-attribute vec2 texcoord;
-varying vec2 vtexcoord;
-void main() {
-  gl_Position = proj*model*vertex;
-  vtexcoord = texcoord;
-}`
-
-	fsrc = `#version 100
-precision mediump float;
-uniform vec4 color;
-uniform sampler2D tex;
-varying vec2 vtexcoord;
-void main() {
-  //gl_FragColor = color;
-  gl_FragColor = texture2D(tex, vtexcoord.xy);
-}`
-)

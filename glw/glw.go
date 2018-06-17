@@ -8,12 +8,8 @@ import (
 	"log"
 	"math"
 	"os"
-	"reflect"
-	"runtime"
-	"strings"
 	"time"
 
-	"golang.org/x/image/math/f32"
 	"golang.org/x/mobile/asset"
 	"golang.org/x/mobile/gl"
 )
@@ -23,9 +19,20 @@ var (
 	logger = log.New(os.Stderr, "glw: ", 0)
 )
 
+type FPS struct{ time.Time }
+
+func (fps *FPS) Update(a time.Time) {
+	dt := a.Sub(fps.Time)
+	fmt.Printf("fps=%v dt=%s\n", int(time.Second/dt), dt)
+	fps.Time = a
+}
+
 func RGBA(c color.Color) (r, g, b, a float32) {
-	ur, ug, ub, ua := c.RGBA()
-	return float32(uint8(ur)) / 255, float32(uint8(ug)) / 255, float32(uint8(ub)) / 255, float32(uint8(ua)) / 255
+	// ur, ug, ub, ua := c.RGBA()
+	// return float32(uint8(ur)) / 255, float32(uint8(ug)) / 255, float32(uint8(ub)) / 255, float32(uint8(ua)) / 255
+	const z = math.MaxUint16
+	cr, cg, cb, ca := c.RGBA()
+	return float32(cr) / z, float32(cg) / z, float32(cb) / z, float32(ca) / z
 }
 
 func genHeightmap(r image.Rectangle) (vertices []float32, indices []uint32) {
@@ -49,6 +56,8 @@ func genHeightmap(r image.Rectangle) (vertices []float32, indices []uint32) {
 // TODO allow package to be used by multiple contexts in parallel.
 func With(glctx gl.Context) gl.Context { ctx = glctx; return glctx }
 
+func Context() gl.Context { return ctx }
+
 func must(err error) {
 	if err != nil {
 		logger.Fatal(err)
@@ -61,399 +70,95 @@ func MustOpen(name string) asset.File {
 	return f
 }
 
-// MustReadAll reads from assets.
-func MustReadAll(name string) []byte {
-	b, err := ioutil.ReadAll(MustOpen(name))
+// MustReadAll reads the file named by filename from assets and returns the contents or panics on error.
+func MustReadAll(filename string) []byte {
+	b, err := ioutil.ReadAll(MustOpen(filename))
 	must(err)
 	return b
 }
 
-// caller returns first file and line number outside of this package for calling
-// goroutine's stack, prefixed with defaultName which may be overridden based on
-// stack frames.
-func caller(defaultName string) string {
-	pc := make([]uintptr, 10)
-	n := runtime.Callers(3, pc)
-	frames := runtime.CallersFrames(pc[:n])
-
-	var (
-		frame runtime.Frame
-		more  bool
-		name  = defaultName
-		inpkg = func(s string) bool { return strings.HasPrefix(s, "dasa.cc/x/glw") }
-	)
-
-	for frame, more = frames.Next(); more && inpkg(frame.Function); frame, more = frames.Next() {
-		switch frame.Function {
-		case "dasa.cc/x/glw.VertSrc.Compile":
-			name = "VertexShader"
-		case "dasa.cc/x/glw.FragSrc.Compile":
-			name = "FragmentShader"
-		}
-	}
-
-	return fmt.Sprintf("%s %s:%v", name, frame.File, frame.Line)
+type Sampler struct {
+	Texture
+	U1i
 }
 
-func compile(typ gl.Enum, src string) (gl.Shader, error) {
-	shd := ctx.CreateShader(typ)
-	ctx.ShaderSource(shd, src)
-	ctx.CompileShader(shd)
-	if ctx.GetShaderi(shd, gl.COMPILE_STATUS) == 0 {
-		return shd, fmt.Errorf("%s\n%s", caller("CompileShader"), ctx.GetShaderInfoLog(shd))
-	}
-	return shd, nil
+func (a *Sampler) Bind() {
+	a.Texture.Bind()
+	a.U1i.Set(int(a.Texture.Value - 1))
 }
 
-type VertSrc string
-
-func (src VertSrc) Compile() (gl.Shader, error) { return compile(gl.VERTEX_SHADER, string(src)) }
-
-type FragSrc string
-
-func (src FragSrc) Compile() (gl.Shader, error) { return compile(gl.FRAGMENT_SHADER, string(src)) }
-
-type VertAsset string
-
-func (name VertAsset) Source() VertSrc { return VertSrc(MustReadAll(string(name))) }
-
-type FragAsset string
-
-func (name FragAsset) Source() FragSrc { return FragSrc(MustReadAll(string(name))) }
-
-type Program struct{ gl.Program }
-
-func (prg Program) Use()                           { ctx.UseProgram(prg.Program) }
-func (prg Program) Uniform(name string) gl.Uniform { return ctx.GetUniformLocation(prg.Program, name) }
-func (prg Program) Attrib(name string) gl.Attrib   { return ctx.GetAttribLocation(prg.Program, name) }
-func (prg Program) Delete()                        { ctx.DeleteProgram(prg.Program) }
-
-func (prg *Program) MustBuild(vsrc VertSrc, fsrc FragSrc)           { must(prg.Build(vsrc, fsrc)) }
-func (prg *Program) MustBuildAssets(vtag VertAsset, ftag FragAsset) { must(prg.BuildAssets(vtag, ftag)) }
-
-func (prg *Program) BuildAssets(vtag VertAsset, ftag FragAsset) error {
-	return prg.Build(vtag.Source(), ftag.Source())
+type VertexArray struct {
+	gl.Attrib
+	Floats FloatBuffer
+	size   int
 }
 
-func (prg *Program) Build(vsrc VertSrc, fsrc FragSrc) error {
-	prg.Program = ctx.CreateProgram()
-
-	vshd, err := vsrc.Compile()
-	if err != nil {
-		return err
-	}
-	ctx.AttachShader(prg.Program, vshd)
-	defer ctx.DeleteShader(vshd)
-
-	fshd, err := fsrc.Compile()
-	if err != nil {
-		return err
-	}
-	ctx.AttachShader(prg.Program, fshd)
-	defer ctx.DeleteShader(fshd)
-
-	ctx.LinkProgram(prg.Program)
-	if ctx.GetProgrami(prg.Program, gl.LINK_STATUS) == 0 {
-		return fmt.Errorf("%s\n%s", caller("LinkProgram"), ctx.GetProgramInfoLog(prg.Program))
-	}
-
-	return nil
+func (vert *VertexArray) Create(usage gl.Enum, size int, floats []float32) {
+	vert.size = size
+	vert.Floats.Create(usage, floats)
 }
 
-func (prg Program) SetLocations(dst interface{}) {
-	var val reflect.Value
-	if v, ok := dst.(reflect.Value); ok {
-		val = v
-	} else {
-		val = reflect.ValueOf(dst).Elem()
-	}
-	typ := val.Type()
-	for i := 0; i < val.NumField(); i++ {
-		if f := val.Field(i); f.CanSet() {
-			name := strings.ToLower(typ.Field(i).Name)
-			switch f.Interface().(type) {
-			case gl.Attrib:
-				f.Set(reflect.ValueOf(prg.Attrib(name)))
-			case A2fv:
-				f.Set(reflect.ValueOf(A2fv(prg.Attrib(name))))
-			case A3fv:
-				f.Set(reflect.ValueOf(A3fv(prg.Attrib(name))))
-			case A4fv:
-				f.Set(reflect.ValueOf(A4fv(prg.Attrib(name))))
-			case gl.Uniform:
-				f.Set(reflect.ValueOf(prg.Uniform(name)))
-			case U1i:
-				f.Set(reflect.ValueOf(U1i(prg.Uniform(name))))
-			case U2i:
-				f.Set(reflect.ValueOf(U2i(prg.Uniform(name))))
-			case U3i:
-				f.Set(reflect.ValueOf(U3i(prg.Uniform(name))))
-			case U4i:
-				f.Set(reflect.ValueOf(U4i(prg.Uniform(name))))
-			case U1f:
-				f.Set(reflect.ValueOf(U1f(prg.Uniform(name))))
-			case U2fv:
-				f.Set(reflect.ValueOf(U2fv{prg.Uniform(name), f32.Vec2{}}))
-			case U3fv:
-				f.Set(reflect.ValueOf(U3fv{prg.Uniform(name), f32.Vec3{}}))
-			case U4fv:
-				f.Set(reflect.ValueOf(U4fv{prg.Uniform(name), f32.Vec4{}, nil}))
-			case U9fv:
-				f.Set(reflect.ValueOf(U9fv(prg.Uniform(name))))
-			case U16fv:
-				f.Set(reflect.ValueOf(U16fv{prg.Uniform(name), ident16fv(), nil}))
-			default:
-				if f.Kind() == reflect.Struct {
-					prg.SetLocations(f)
-				}
-			}
-		}
-	}
+func (vert *VertexArray) Update(floats []float32) {
+	vert.Floats.Update(floats)
 }
 
-type U1i gl.Uniform
-
-func (u U1i) Set(v int) { ctx.Uniform1i(gl.Uniform(u), v) }
-
-type U2i gl.Uniform
-
-func (u U2i) Set(v0, v1 int) { ctx.Uniform2i(gl.Uniform(u), v0, v1) }
-
-type U3i gl.Uniform
-
-func (u U3i) Set(v0, v1, v2 int32) { ctx.Uniform3i(gl.Uniform(u), v0, v1, v2) }
-
-type U4i gl.Uniform
-
-func (u U4i) Set(v0, v1, v2, v3 int32) { ctx.Uniform4i(gl.Uniform(u), v0, v1, v2, v3) }
-
-type U1f gl.Uniform
-
-func (u U1f) Set(v float32) { ctx.Uniform1f(gl.Uniform(u), v) }
-
-type U2fv struct {
-	gl.Uniform
-	v f32.Vec2
+func (vert VertexArray) Delete() {
+	vert.Floats.Delete()
 }
 
-func (u U2fv) Update() { ctx.Uniform2fv(u.Uniform, u.v[:]) }
-
-func (u *U2fv) Set(v f32.Vec2) { u.v = v }
-
-type U3fv struct {
-	gl.Uniform
-	v f32.Vec3
+func (vert *VertexArray) Bind() {
+	vert.Floats.Bind()
+	ctx.EnableVertexAttribArray(vert.Attrib)
+	ctx.VertexAttribPointer(vert.Attrib, vert.size, gl.FLOAT, false, 0, 0)
 }
 
-func (u U3fv) Update() { ctx.Uniform3fv(u.Uniform, u.v[:]) }
-
-func (u U3fv) Set(v f32.Vec3) { u.v = v }
-
-type U4fv struct {
-	gl.Uniform
-	v f32.Vec4
-	a *animator
+func (vert VertexArray) Unbind() {
+	vert.Floats.Unbind()
+	ctx.DisableVertexAttribArray(vert.Attrib)
 }
 
-func (u U4fv) Update() {
-	if u.a != nil {
-		u.v = u.a.pt.eval4fv()
-	}
-	ctx.Uniform4fv(u.Uniform, u.v[:])
+func (vert VertexArray) Draw(mode gl.Enum) {
+	vert.Floats.Draw(mode)
 }
 
-func (u *U4fv) Set(v f32.Vec4) {
-	if u.a != nil {
-		u.a.pt.Translate = v
-	}
-	u.v = v
-	ctx.Uniform4fv(u.Uniform, u.v[:])
+type VertexElement struct {
+	gl.Attrib
+	Floats FloatBuffer
+	Uints  UintBuffer
+	size   int
 }
 
-func (u *U4fv) Animator(options ...func(Animator)) Animator {
-	if u.a == nil {
-		u.a = newanimator()
-	}
-	u.a.apply(options...)
-	return u.a
+func (vert *VertexElement) Create(usage gl.Enum, size int, floats []float32, uints []uint32) {
+	vert.size = size
+	vert.Floats.Create(usage, floats)
+	vert.Uints.Create(usage, uints)
 }
 
-func (u *U4fv) Transform(transforms ...func(Transformer)) { u.Animator().Start(transforms...) }
-
-func (u *U4fv) Stage(epoch time.Time, transforms ...func(Transformer)) {
-	u.a.Stage(epoch, transforms...)
-}
-func (u *U4fv) Step(now time.Time) {
-	if !u.a.Step(now) {
-		u.a.Cancel()
-	}
-	u.Update()
+func (vert *VertexElement) Update(floats []float32, uints []uint32) {
+	vert.Floats.Update(floats)
+	vert.Uints.Update(uints)
 }
 
-type U9fv gl.Uniform
-
-func (u U9fv) Set(m f32.Mat3) { ctx.UniformMatrix4fv(gl.Uniform(u), m[:]) }
-
-type U16fv struct {
-	gl.Uniform
-	m f32.Mat4
-	a *animator
+func (vert VertexElement) Delete() {
+	vert.Floats.Delete()
+	vert.Uints.Delete()
 }
 
-func (u U16fv) Inv2f(nx, ny float32) (float32, float32) {
-	var sx, sy float32 = 1, 1
-	if u.a != nil {
-		sx = 1 / u.a.pt.Scale[0]
-		sy = 1 / u.a.pt.Scale[1]
-	}
-	m := inv16fv(u.m)
-	return sx*nx*m[0] + ny*m[1], nx*m[4] + sy*ny*m[5]
+func (vert *VertexElement) Bind() {
+	vert.Floats.Bind()
+	vert.Uints.Bind()
+	ctx.EnableVertexAttribArray(vert.Attrib)
+	ctx.VertexAttribPointer(vert.Attrib, vert.size, gl.FLOAT, false, 0, 0)
 }
 
-func (u U16fv) Update() {
-	if u.a != nil {
-		u.m = u.a.pt.eval16fv()
-	}
-	ctx.UniformMatrix4fv(u.Uniform, u.m[:])
+func (vert VertexElement) Unbind() {
+	vert.Floats.Unbind()
+	vert.Uints.Unbind()
+	ctx.DisableVertexAttribArray(vert.Attrib)
 }
 
-func (u *U16fv) Set(m f32.Mat4) {
-	u.m = m
-	ctx.UniformMatrix4fv(u.Uniform, u.m[:])
-}
-
-func (u *U16fv) Ortho(l, r float32, b, t float32, n, f float32) {
-	u.m = Ortho(l, r, b, t, n, f)
-	u.Update()
-}
-
-func (u *U16fv) Animator(options ...func(Animator)) Animator {
-	if u.a == nil {
-		u.a = newanimator()
-	}
-	u.a.apply(options...)
-	return u.a
-}
-
-func (u *U16fv) Transform(transforms ...func(Transformer)) { u.Animator().Start(transforms...) }
-
-func (u *U16fv) Stage(epoch time.Time, transforms ...func(Transformer)) {
-	u.a.Stage(epoch, transforms...)
-}
-
-func (u *U16fv) Step(now time.Time) {
-	if !u.a.Step(now) {
-		u.a.Cancel()
-	}
-	u.Update()
-}
-
-func (u U16fv) String() string { return string16fv(u.m) }
-
-type A2fv gl.Attrib
-
-func (a A2fv) Enable()  { ctx.EnableVertexAttribArray(gl.Attrib(a)) }
-func (a A2fv) Disable() { ctx.DisableVertexAttribArray(gl.Attrib(a)) }
-func (a A2fv) Pointer() {
-	a.Enable()
-	ctx.VertexAttribPointer(gl.Attrib(a), 2, gl.FLOAT, false, 0, 0)
-}
-
-type A3fv gl.Attrib
-
-func (a A3fv) Enable()  { ctx.EnableVertexAttribArray(gl.Attrib(a)) }
-func (a A3fv) Disable() { ctx.DisableVertexAttribArray(gl.Attrib(a)) }
-func (a A3fv) Pointer() {
-	a.Enable()
-	ctx.VertexAttribPointer(gl.Attrib(a), 3, gl.FLOAT, false, 0, 0)
-}
-
-type A4fv gl.Attrib
-
-func (a A4fv) Enable()  { ctx.EnableVertexAttribArray(gl.Attrib(a)) }
-func (a A4fv) Disable() { ctx.DisableVertexAttribArray(gl.Attrib(a)) }
-func (a A4fv) Pointer() {
-	a.Enable()
-	ctx.VertexAttribPointer(gl.Attrib(a), 4, gl.FLOAT, false, 0, 0)
-}
-
-type FloatBuffer struct {
-	gl.Buffer
-	bin   []byte
-	count int
-	usage gl.Enum
-}
-
-func (buf *FloatBuffer) Create(usage gl.Enum, data []float32) {
-	buf.usage = usage
-	buf.Buffer = ctx.CreateBuffer()
-	buf.Bind()
-	buf.Update(data)
-}
-
-func (buf FloatBuffer) Delete()           { ctx.DeleteBuffer(buf.Buffer) }
-func (buf *FloatBuffer) Bind()            { ctx.BindBuffer(gl.ARRAY_BUFFER, buf.Buffer) }
-func (buf FloatBuffer) Unbind()           { ctx.BindBuffer(gl.ARRAY_BUFFER, gl.Buffer{0}) }
-func (buf FloatBuffer) Draw(mode gl.Enum) { ctx.DrawArrays(mode, 0, buf.count) }
-
-func (buf *FloatBuffer) Update(data []float32) {
-	// TODO seems like this could be simplified
-	// also look at UintBuffer
-	buf.count = len(data)
-	subok := len(buf.bin) > 0 && len(data)*4 <= len(buf.bin)
-	if !subok {
-		buf.bin = make([]byte, len(data)*4)
-	}
-	for i, x := range data {
-		u := math.Float32bits(x)
-		buf.bin[4*i+0] = byte(u >> 0)
-		buf.bin[4*i+1] = byte(u >> 8)
-		buf.bin[4*i+2] = byte(u >> 16)
-		buf.bin[4*i+3] = byte(u >> 24)
-	}
-	if subok {
-		ctx.BufferSubData(gl.ARRAY_BUFFER, 0, buf.bin)
-	} else {
-		ctx.BufferData(gl.ARRAY_BUFFER, buf.bin, buf.usage)
-	}
-}
-
-type UintBuffer struct {
-	gl.Buffer
-	bin   []byte
-	count int
-	usage gl.Enum
-}
-
-func (buf *UintBuffer) Create(usage gl.Enum, data []uint32) {
-	buf.usage = usage
-	buf.Buffer = ctx.CreateBuffer()
-	buf.Bind()
-	buf.Update(data)
-}
-
-func (buf UintBuffer) Delete()           { ctx.DeleteBuffer(buf.Buffer) }
-func (buf *UintBuffer) Bind()            { ctx.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.Buffer) }
-func (buf UintBuffer) Unbind()           { ctx.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.Buffer{0}) }
-func (buf UintBuffer) Draw(mode gl.Enum) { ctx.DrawElements(mode, buf.count, gl.UNSIGNED_INT, 0) }
-
-func (buf *UintBuffer) Update(data []uint32) {
-	buf.count = len(data)
-	subok := len(buf.bin) > 0 && len(data)*4 <= len(buf.bin)
-	if !subok {
-		buf.bin = make([]byte, len(data)*4)
-	}
-	for i, u := range data {
-		buf.bin[4*i+0] = byte(u >> 0)
-		buf.bin[4*i+1] = byte(u >> 8)
-		buf.bin[4*i+2] = byte(u >> 16)
-		buf.bin[4*i+3] = byte(u >> 24)
-	}
-	if subok {
-		ctx.BufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, buf.bin)
-	} else {
-		ctx.BufferData(gl.ELEMENT_ARRAY_BUFFER, buf.bin, buf.usage)
-	}
+func (vert VertexElement) Draw(mode gl.Enum) {
+	vert.Uints.Draw(mode)
 }
 
 type FrameBuffer struct {
