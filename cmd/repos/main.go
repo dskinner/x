@@ -22,9 +22,9 @@ func (a *folders) String() string {
 }
 
 func (a *folders) Set(x string) error {
-	p := strings.Split(x, ":")
+	p := strings.Split(x, ",")
 	if len(p) > 2 {
-		return errors.New("too many occurances of : in argument")
+		return errors.New("too many occurances of , in argument")
 	}
 	n := -1
 	if len(p) == 2 {
@@ -41,7 +41,7 @@ func (a *folders) Set(x string) error {
 var flagFolders folders
 
 func main() {
-	flag.Var(&flagFolders, "p", "path[:depth]; may be specified multiple times.")
+	flag.Var(&flagFolders, "p", "path[,depth]; may be specified multiple times.")
 	flag.Parse()
 
 	for _, folder := range flagFolders {
@@ -50,7 +50,7 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			fmt.Printf("%s:%s\n", folder.name, rel)
+			fmt.Printf("%s,%s\n", folder.name, rel)
 		}
 	}
 }
