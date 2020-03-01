@@ -91,7 +91,9 @@ func (prg Program) Delete() { ctx.DeleteProgram(prg.Program) }
 func (prg *Program) MustBuild(vsrc VertSrc, fsrc FragSrc) { must(prg.Build(vsrc, fsrc)) }
 
 // MustBuildAssets is a helper that wraps Program.BuildAssets and panics on error.
-func (prg *Program) MustBuildAssets(vtag VertAsset, ftag FragAsset) { must(prg.BuildAssets(vtag, ftag)) }
+func (prg *Program) MustBuildAssets(vtag VertAsset, ftag FragAsset) {
+	must(prg.BuildAssets(vtag, ftag))
+}
 
 // BuildAssets is a helper that wraps Program.Build with asset file contents of filenames vtag and ftag.
 func (prg *Program) BuildAssets(vtag VertAsset, ftag FragAsset) error {
