@@ -144,6 +144,10 @@ func (a Transform) eval1f() float32 {
 }
 
 type Animator interface {
+	// Apply sets default options on animator. Any animation in progress is cancelled
+	// first unless the length of options is zero, then this call has no effect.
+	Apply(options ...func(Animator))
+
 	Tick(time.Duration)
 
 	Duration(time.Duration)
@@ -184,7 +188,7 @@ type animator struct {
 	die, done chan struct{}
 }
 
-func newanimator() *animator {
+func newanimator(options ...func(Animator)) *animator {
 	a := &animator{
 		at:     TransformIdent(),
 		pt:     TransformIdent(),
@@ -196,10 +200,11 @@ func newanimator() *animator {
 	}
 	close(a.die)
 	close(a.done)
+	a.Apply(options...)
 	return a
 }
 
-func (a *animator) apply(options ...func(Animator)) {
+func (a *animator) Apply(options ...func(Animator)) {
 	if len(options) == 0 {
 		return
 	}

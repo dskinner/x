@@ -37,14 +37,14 @@ type uniform struct {
 
 func newuniform(a gl.Uniform, update func()) *uniform {
 	u := &uniform{Uniform: a, animator: newanimator(), update: update}
-	u.animator.apply(Notify(&u.animating))
+	u.animator.Apply(Notify(&u.animating))
 	return u
 }
 
 func (u *uniform) At() Transform { return u.animator.At() }
 
 func (u *uniform) Animator(options ...func(Animator)) Animator {
-	u.animator.apply(options...)
+	u.animator.Apply(options...)
 	return u.animator
 }
 
@@ -129,10 +129,9 @@ func (u *U4fv) Set(v f32.Vec4) {
 
 func (u *U4fv) Animator(options ...func(Animator)) Animator {
 	if u.a == nil {
-		u.a = newanimator()
-		u.a.apply(Notify(&u.animating))
+		u.a = newanimator(Notify(&u.animating))
 	}
-	u.a.apply(options...)
+	u.a.Apply(options...)
 	return u.a
 }
 
