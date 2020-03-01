@@ -185,7 +185,8 @@ func (a Multivector) Mul(b Multivector) Multivector {
 			c = append(c, b0.Mul(b1))
 		}
 	}
-	return simplify(c)
+	// return simplify(c)
+	return c
 }
 
 func (a Multivector) Add(b Multivector) Multivector {
@@ -248,21 +249,21 @@ func (a Multivector) ScalarProduct(b Multivector) float64 {
 	return a.Lc(b).Scalar()
 }
 
-func (a Multivector) NormE() float64 {
-	s := a.ScalarProduct(a.Rev())
-	if s < 0 {
-		return 0
-	}
-	return math.Sqrt(s)
-}
+// func (a Multivector) NormE() float64 {
+// 	s := a.ScalarProduct(a.Rev())
+// 	if s < 0 {
+// 		return 0
+// 	}
+// 	return math.Sqrt(s)
+// }
 
-func (a Multivector) NormE2() float64 {
-	s := a.ScalarProduct(a.Rev())
-	if s < 0 {
-		return 0
-	}
-	return s
-}
+// func (a Multivector) NormE2() float64 {
+// 	s := a.ScalarProduct(a.Rev())
+// 	if s < 0 {
+// 		return 0
+// 	}
+// 	return s
+// }
 
 func (a Multivector) Norm() float64 {
 	return math.Sqrt(a.NormSq())

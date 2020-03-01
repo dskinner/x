@@ -231,16 +231,14 @@ func saveImage(m image.Image, p string) {
 	}
 }
 
-// -0.835 -0.2321
-// -0.70176 -0.3842
 func TestJuliaFractal(t *testing.T) {
-	// e1 := Multivector{{1, E1}}
+	e1 := Multivector{{1, E1}}
 
-	// const width, height = 400, 300
-	// const zoom = 0.007
+	const width, height = 400, 300
+	const zoom = 0.007
 
-	const width, height = 800, 600
-	const zoom = 0.0035
+	// const width, height = 800, 600
+	// const zoom = 0.0035
 
 	const maxiter = 60
 
@@ -260,52 +258,22 @@ func TestJuliaFractal(t *testing.T) {
 			}
 
 			for clr.G = 0; clr.G < maxiter; clr.G++ {
-				p = p.Mul(Multivector{{1, E1}}).Mul(p).Add(c)
+				p = p.Mul(e1).Mul(p).Add(c)
 				if p.NormSq() > 1e4 {
-					// clr.R = 255
 					clr.R = clr.G * 2
 					break
 				}
 			}
+			clr.G *= uint8(255 / maxiter)
 
 			// n := p.Norm()/10 + 0.5
 			// if n > 255 {
-			// 	n = 255
+			// n = 255
 			// }
-			// clr.G = uint8(n / 8)
+			// clr.B = uint8(n / 8)
 
-			clr.G *= uint8(255 / maxiter)
 			m.Set(x, y, clr)
 		}
 	}
 	saveImage(m, "julia.png")
 }
-
-// func julia(x Multivector, c Multivector, maxiter int, maxabs float64) float64 {
-
-// }
-
-// func juliaFunc(c Multivector, maxiter int, maxabs float64, zoom float64) func(Multivector) float64 {
-// 	return func(x Multivector) float64 {
-// 		const e = Multivector{Blade{1, 1}}
-// 		x = x.Mul(Multivector{Blade{s: zoom}})
-// 		for i := 0; i < maxiter; i++ {
-// 			x = x.Mul(e).Mul(x).Add(c)
-// 			if x.NormSq() > maxabs {
-// 				return math.Inf(0)
-// 			}
-// 		}
-// 		return x.Norm()
-// 	}
-// }
-
-// func mandelbrot(center complex128, maxIter int, maxAbs float64) int {
-// 	z := 0 + 0i
-// 	for i := 0; i < maxIter; i++ {
-// 		z = z*z + center
-// 		if cmplx.IsInf(z) || cmplx.IsNaN(z) || cmplx.Abs(z) > maxAbs {
-// 			return i
-// 		}
-// 	}
-// 	return maxIter
-// }
