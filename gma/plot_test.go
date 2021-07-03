@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"math"
 	"os"
+	"sync"
 	"testing"
 
 	"gonum.org/v1/plot"
@@ -38,10 +39,7 @@ type plttr struct {
 }
 
 func newplttr() *plttr {
-	p, err := plot.New()
-	if err != nil {
-		panic(err)
-	}
+	p := plot.New()
 	p.X.Min, p.X.Max = -5, 5
 	p.Y.Min, p.Y.Max = -5, 5
 	p.Add(plotter.NewGrid())
@@ -248,32 +246,43 @@ func TestJuliaFractal(t *testing.T) {
 
 	r := image.Rect(-width/2, -height/2, width/2, height/2)
 	m := image.NewRGBA(r)
+
+	var wg sync.WaitGroup
+
 	for y := r.Min.Y; y < r.Max.Y; y++ {
 		for x := r.Min.X; x < r.Max.X; x++ {
-			clr := color.RGBA{A: 255}
 
-			p := Multivector{
-				{float64(x) * zoom, E1},
-				{float64(y) * zoom, E2},
-			}
+			wg.Add(1)
 
-			for clr.G = 0; clr.G < maxiter; clr.G++ {
-				p = p.Mul(e1).Mul(p).Add(c)
-				if p.NormSq() > 1e4 {
-					clr.R = clr.G * 2
-					break
+			go func(x, y int) {
+				clr := color.RGBA{A: 255}
+
+				p := Multivector{
+					{float64(x) * zoom, E1},
+					{float64(y) * zoom, E2},
 				}
-			}
-			clr.G *= uint8(255 / maxiter)
 
-			// n := p.Norm()/10 + 0.5
-			// if n > 255 {
-			// n = 255
-			// }
-			// clr.B = uint8(n / 8)
+				for clr.G = 0; clr.G < maxiter; clr.G++ {
+					p = p.Mul(e1).Mul(p).Add(c)
+					if p.NormSq() > 1e4 {
+						clr.R = clr.G * 2
+						break
+					}
+				}
+				clr.G *= uint8(255 / maxiter)
 
-			m.Set(x, y, clr)
+				// n := p.Norm()/10 + 0.5
+				// if n > 255 {
+				// n = 255
+				// }
+				// clr.B = uint8(n / 8)
+
+				m.Set(x, y, clr)
+				wg.Done()
+			}(x, y)
 		}
 	}
+
+	wg.Wait()
 	saveImage(m, "julia.png")
 }

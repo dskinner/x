@@ -166,6 +166,10 @@ func signOf(a, b uint8) float64 {
 	return -1
 }
 
+// Multivector is formally defined as a set of blades of varying grades.
+// This package generalizes the type to also represent graded vectors.
+// This may change in the future with explicit types.
+// For example, instead of Multivector{{1, E1}, {1, E1}} one might use Bivector
 type Multivector []Blade
 
 func (a Multivector) Wedge(b Multivector) Multivector {

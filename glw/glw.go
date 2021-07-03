@@ -277,7 +277,7 @@ func (tex Texture) Unbind() { ctx.BindTexture(gl.TEXTURE_2D, gl.Texture{0}) }
 
 func (tex *Texture) Upload(src *image.RGBA) {
 	tex.r = src.Bounds()
-	ctx.TexImage2D(gl.TEXTURE_2D, tex.lod, tex.r.Dx(), tex.r.Dy(), gl.RGBA, gl.UNSIGNED_BYTE, src.Pix)
+	ctx.TexImage2D(gl.TEXTURE_2D, tex.lod, gl.RGBA, tex.r.Dx(), tex.r.Dy(), gl.RGBA, gl.UNSIGNED_BYTE, src.Pix)
 }
 
 func (tex *Texture) DrawSrc(src *image.RGBA) {
