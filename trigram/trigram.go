@@ -19,8 +19,8 @@ type Set struct {
 	// or defaults to unicode.IsSpace if not set.
 	Fields func(rune) bool
 
-	ks set.StringSlice
-	vs set.StringChain
+	ks set.Slice[string]
+	vs set.Chain[string]
 }
 
 // Index parses and stores trigrams for each s in xs. Panics if nil.
@@ -41,7 +41,7 @@ func (a *Set) Index(xs ...string) {
 
 // Match indexed values for x that meet min threshold; returns matches and unit scores.
 func (a Set) Match(x string, min float64) ([]string, []float64) {
-	var p set.StringSlice
+	var p set.Slice[string]
 	var u []float64
 
 	q := Parse(x, a.Mapping, a.Fields)
@@ -71,7 +71,7 @@ func (a Set) Match(x string, min float64) ([]string, []float64) {
 // Parse returns a slice of trigrams for s after modifying characters according to
 // the mapping function followed by word splitting according to fields function.
 func Parse(s string, mapping func(rune) rune, fields func(rune) bool) []string {
-	var p set.StringSlice
+	var p set.Slice[string]
 	for _, t := range strings.FieldsFunc(strings.Map(mapping, s), fields) {
 		t = "\x00\x00" + t + "\x00"
 		for i := 0; i <= len(t)-3; i++ {

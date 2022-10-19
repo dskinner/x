@@ -1,12 +1,13 @@
 package set
 
 import (
+	"fmt"
 	"math/rand"
 	"sort"
 	"testing"
 )
 
-const N, L = 100000, 100
+const N, L = 10000, 100
 
 var uniq, dups []string
 
@@ -27,6 +28,55 @@ func init() {
 	for i, j := range rand.Perm(N) {
 		uniq[i], uniq[j] = uniq[j], uniq[i]
 		dups[i], dups[j] = dups[j], dups[i]
+	}
+
+	for i, a := range uniq {
+		for j, b := range uniq {
+			if i != j && a == b {
+				panic("init failed to produce unique string values")
+			}
+		}
+	}
+}
+
+func TestGenericSliceInsert(t *testing.T) {
+	var a Slice[string]
+	for i, s := range uniq {
+		_, ok := a.Insert(s)
+		if !ok {
+			t.Fatalf("Insert(uniq[%v]) failed", i)
+		}
+		if !sort.StringsAreSorted(a) {
+			t.Fatal("sort.StringsAreSorted returned false")
+		}
+	}
+	if have, want := len(a), len(uniq); have != want {
+		t.Fatalf("Unexpected len after inserts; have %v, want %v.", have, want)
+	}
+
+	var b Slice[string]
+	for _, s := range dups {
+		_, _ = b.Insert(s)
+		if !sort.StringsAreSorted(b) {
+			t.Fatal("sort.StringsAreSorted returned false")
+		}
+	}
+	if have, want := len(b), N/2; have != want {
+		t.Fatalf("Unexpected len after dup inserts; have %v, want %v.", have, want)
+	}
+}
+
+func TestFilter(t *testing.T) {
+	a := []string{
+		"a", "b", "c",
+		"b", "c", "d",
+		"c", "d", "e",
+	}
+	Filter(&a)
+	have := fmt.Sprintf("%v", a)
+	want := "[a b c d e]"
+	if have != want {
+		t.Fatalf("have %v, want %v.", have, want)
 	}
 }
 
@@ -88,6 +138,24 @@ func TestReflectInsert(t *testing.T) {
 	}
 }
 
+func BenchmarkUniq_Generic_Slice(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		var a Slice[string]
+		for _, s := range uniq {
+			a.Insert(s)
+		}
+	}
+}
+
+func BenchmarkDups_Generic_Slice(b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		var a Slice[string]
+		for _, s := range dups {
+			a.Insert(s)
+		}
+	}
+}
+
 func BenchmarkUniq_String_Slice(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		var a StringSlice
@@ -112,7 +180,7 @@ func BenchmarkUniq_String_Wacky(b *testing.B) {
 		for _, s := range uniq {
 			a = append(a, s)
 		}
-		a.Filter()
+		a.filter()
 	}
 }
 
@@ -122,7 +190,7 @@ func BenchmarkDups_String_Wacky(b *testing.B) {
 		for _, s := range dups {
 			a = append(a, s)
 		}
-		a.Filter()
+		a.filter()
 	}
 }
 
