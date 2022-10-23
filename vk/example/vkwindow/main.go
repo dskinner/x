@@ -1,3 +1,5 @@
+//go:generate glslc shaders/shader.vert -o shaders/vert.spv
+//go:generate glslc shaders/shader.frag -o shaders/frag.spv
 package main
 
 import (

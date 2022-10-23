@@ -2,39 +2,89 @@
 https://vulkan-tutorial.com/en/Overview
 https://github.com/toy80/vk/blob/master/toy80-example-vk/toy80-example-vk.go
 */
+//go:generate glslc shaders/shader.vert -o shaders/vert.spv
+//go:generate glslc shaders/shader.frag -o shaders/frag.spv
 package vk
 
 /*
 #cgo pkg-config: vulkan glfw3
 
+//#define VK_USE_PLATFORM_WIN32_KHR
+//#define GLFW_EXPOSE_NATIVE_WIN32
+
+//#define VK_USE_PLATFORM_XCB_KHR
+//#define GLFW_EXPOSE_NATIVE_X11
+
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+
+//#include <GLFW/glfw3native.h>
+
+#include <stdio.h>
 #include <stdlib.h>
-#include "vk.h"
+
+float _priority = 1.0f;
+float* priority = &_priority;
+
+VkClearValue _defaultClearColor = {0.0, 0.0, 0.0, 1.0};
+VkClearValue* defaultClearColor = &_defaultClearColor;
+
+void error_callback(int error, const char* description) {
+	fprintf(stderr, "Error: %s\n", description);
+}
+
+void init_error_callback() {
+	glfwSetErrorCallback(error_callback);
+}
+
+// vulkan layer debug messenger callback
+VkBool32 debug_callback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT           messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT                  messageTypes,
+    const VkDebugUtilsMessengerCallbackDataEXT*      pCallbackData,
+    void*                                            pUserData
+) {
+	if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+		fprintf(stderr, "validation layer: %s\n", pCallbackData->pMessage);
+	}
+	return VK_FALSE;
+}
+
+VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger) {
+    PFN_vkCreateDebugUtilsMessengerEXT func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+    if (func != NULL) {
+        return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
+    } else {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+}
+
+void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger, const VkAllocationCallbacks* pAllocator) {
+    PFN_vkDestroyDebugUtilsMessengerEXT func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+    if (func != NULL) {
+        func(instance, debugMessenger, pAllocator);
+    }
+}
+
 */
 import "C"
 
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math"
-	"os"
 	"unsafe"
 )
-
-//export resizeCallback
-func resizeCallback(window *C.GLFWwindow, width, height C.int) {
-	fmt.Printf("resize event: width=%v height=%v\n", width, height)
-}
-
-//export errorCallback
-func errorCallback(error int, description *C.char) {
-	fmt.Printf("error %v: %s\n", error, C.GoString(description))
-}
 
 var deviceExtensions = []string{
 	"VK_KHR_swapchain",
 }
+
+const (
+	Width  = 800
+	Height = 600
+)
 
 func MakeVersion(major, minor, patch uint32) uint32 {
 	return (major << 22) | (minor << 12) | patch
@@ -139,9 +189,9 @@ func (instance *Instance) Destroy() {
 	C.vkDestroyInstance(instance.vkInstance, nil)
 }
 
-func (instance *Instance) CreateWindowSurface(width, height int) (*WindowSurface, error) {
+func (instance *Instance) CreateWindowSurface() (*WindowSurface, error) {
 	surface := &WindowSurface{instance: instance}
-	if err := surface.Create(width, height); err != nil {
+	if err := surface.Create(); err != nil {
 		return nil, err
 	}
 	return surface, nil
@@ -153,17 +203,15 @@ type WindowSurface struct {
 	vkSurface C.VkSurfaceKHR
 }
 
-func (surface *WindowSurface) Create(width, height int) error {
+func (surface *WindowSurface) Create() error {
 	// init window
 	C.glfwWindowHint(C.GLFW_CLIENT_API, C.GLFW_NO_API)
-	// C.glfwWindowHint(C.GLFW_RESIZABLE, C.GLFW_FALSE)
+	C.glfwWindowHint(C.GLFW_RESIZABLE, C.GLFW_FALSE)
 
-	surface.window = C.glfwCreateWindow(C.int(width), C.int(height), C.CString("Vulkan"), nil, nil)
+	surface.window = C.glfwCreateWindow(Width, Height, C.CString("Vulkan"), nil, nil)
 	if surface.window == nil {
 		return errors.New("glfwCreateWindow failed")
 	}
-
-	C.glfwSetFramebufferSizeCallback(surface.window, (C.GLFWframebuffersizefun)(unsafe.Pointer(C.resizeCallback_cgo)))
 
 	if C.glfwCreateWindowSurface(surface.instance.vkInstance, surface.window, nil, &surface.vkSurface) != C.VK_SUCCESS {
 		return errors.New("failed to create window surface")
@@ -333,8 +381,7 @@ func Main(appInfo AppInfo, mainFn func(Instance)) {
 		panic("glfwInit failed")
 	}
 	defer C.glfwTerminate()
-
-	C.glfwSetErrorCallback((C.GLFWerrorfun)(unsafe.Pointer(C.errorCallback_cgo)))
+	C.init_error_callback()
 
 	// init vulkan
 	instance := Instance{
@@ -352,12 +399,7 @@ func Main(appInfo AppInfo, mainFn func(Instance)) {
 	}
 	defer instance.Destroy()
 
-	const (
-		width = 800
-		height = 600
-	)
-
-	surface, err := instance.CreateWindowSurface(width, height)
+	surface, err := instance.CreateWindowSurface()
 	if err != nil {
 		panic(err)
 	}
@@ -373,23 +415,47 @@ func Main(appInfo AppInfo, mainFn func(Instance)) {
 	graphicsQueue := device.GetGraphicsQueue(0)
 	presentQueue := device.GetPresentQueue(0)
 
-	// create commandPool in prep for swapchain
-	device.commandPool = device.CreateCommandPool(device.indices.graphicsFamily)
-	defer C.vkDestroyCommandPool(device.vkDevice, device.commandPool, nil)
-
 	// ******************************************************************
 	// make swapchain
-	swapchain := &Swapchain{device: device}
-	if err := swapchain.Create(width, height); err != nil {
+	swapchain, err := device.CreateSwapchain()
+	if err != nil {
 		panic(err)
 	}
-	// defer swapchain.Destroy()
+	defer swapchain.Destroy()
 
 	swapchain.CreateImageViews()
-	swapchain.CreateRenderPass()
-	swapchain.CreateGraphicsPipeline()
-	swapchain.CreateFramebuffers()
-	swapchain.CreateCommandBuffers()
+	defer swapchain.DestroyImageViews()
+
+	// ******************************************************************
+	// *********************** GRAPHICS PIPELINE ************************
+	// ******************************************************************
+
+	renderPass := createRenderPass(device.vkDevice, swapchain)
+	defer C.vkDestroyRenderPass(device.vkDevice, renderPass, nil)
+
+	graphicsPipeline, pipelineLayout := createGraphicsPipeline(device, swapchain, renderPass)
+	defer C.vkDestroyPipelineLayout(device.vkDevice, pipelineLayout, nil)
+	defer C.vkDestroyPipeline(device.vkDevice, graphicsPipeline, nil)
+
+	// ******************************************************************
+	// ************************** Framebuffers **************************
+	// ******************************************************************
+
+	framebuffers := createFramebuffers(device.vkDevice, swapchain, renderPass)
+	defer func() {
+		for _, framebuffer := range framebuffers {
+			C.vkDestroyFramebuffer(device.vkDevice, framebuffer, nil)
+		}
+	}()
+
+	// ******************************************************************
+	// ******************************************************************
+	// ******************************************************************
+
+	commandPool := createCommandPool(device.vkDevice, device.indices)
+	defer C.vkDestroyCommandPool(device.vkDevice, commandPool, nil)
+
+	commandBuffers := createCommandBuffers(device.vkDevice, commandPool, framebuffers, renderPass, swapchain, graphicsPipeline)
 
 	// ******************************************************************
 	// *************************** Main Loop ****************************
@@ -445,34 +511,7 @@ func Main(appInfo AppInfo, mainFn func(Instance)) {
 
 		// draw frame
 		var imageIndex C.uint // references the index in our swapchain.Images that's available
-		result := C.vkAcquireNextImageKHR(device.vkDevice, swapchain.vkSwapchain, math.MaxUint64, imageAvailableSemaphore.vkSemaphore, C.VkFence(vkNullHandle), &imageIndex)
-		if result == C.VK_ERROR_OUT_OF_DATE_KHR {
-			// recreate swapchain
-			fmt.Println("swapchain out of date")
-
-			C.vkDeviceWaitIdle(device.vkDevice)
-			swapchain.Destroy()
-
-			// swapchain = &Swapchain{device: device}
-			if err := swapchain.Create(width, height); err != nil {
-				panic(err)
-			}
-			qSwapchains[0] = swapchain.vkSwapchain
-
-			fmt.Println("swapchain.CreateImageViews()")
-			swapchain.CreateImageViews()
-			fmt.Println("swapchain.CreateRenderPass()")
-			swapchain.CreateRenderPass()
-			fmt.Println("swapchain.CreateGraphicsPipeline()")
-			swapchain.CreateGraphicsPipeline()
-			fmt.Println("swapchain.CreateFramebuffers()")
-			swapchain.CreateFramebuffers()
-
-			// not properly freeing in swapchain.Destroy
-			swapchain.CreateCommandBuffers()
-
-			continue
-		}
+		C.vkAcquireNextImageKHR(device.vkDevice, swapchain.vkSwapchain, math.MaxUint64, imageAvailableSemaphore.vkSemaphore, C.VkFence(vkNullHandle), &imageIndex)
 
 		// VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
 		// VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
@@ -485,7 +524,7 @@ func Main(appInfo AppInfo, mainFn func(Instance)) {
 			pWaitSemaphores:      pWaitSemaphores,
 			pWaitDstStageMask:    pWaitStages,
 			commandBufferCount:   1,
-			pCommandBuffers:      &swapchain.commandBuffers[imageIndex],
+			pCommandBuffers:      &commandBuffers[imageIndex],
 			signalSemaphoreCount: 1,
 			pSignalSemaphores:    pSignalSemaphores,
 		}
@@ -504,9 +543,7 @@ func Main(appInfo AppInfo, mainFn func(Instance)) {
 			pImageIndices:      &imageIndex,
 		}
 
-		if res := C.vkQueuePresentKHR(presentQueue, presentInfo); res == C.VK_ERROR_OUT_OF_DATE_KHR {
-			fmt.Println("queue present failed, swapchain out of date")
-		}
+		C.vkQueuePresentKHR(presentQueue, presentInfo)
 
 		//
 		C.vkQueueWaitIdle(presentQueue)
@@ -517,38 +554,153 @@ func Main(appInfo AppInfo, mainFn func(Instance)) {
 	}
 
 	C.vkDeviceWaitIdle(device.vkDevice)
-	swapchain.Destroy()
 }
 
-type CommandBuffer struct {
-	vkCommandBuffer C.VkCommandBuffer
+func createCommandBuffers(device C.VkDevice, commandPool C.VkCommandPool, framebuffers []C.VkFramebuffer, renderPass C.VkRenderPass, swapchain Swapchain, graphicsPipeline C.VkPipeline) []C.VkCommandBuffer {
+	commandBuffers := make([]C.VkCommandBuffer, len(framebuffers))
+
+	allocInfo := C.VkCommandBufferAllocateInfo{
+		sType:              C.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		commandPool:        commandPool,
+		level:              C.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		commandBufferCount: C.uint(len(commandBuffers)),
+	}
+	if C.vkAllocateCommandBuffers(device, &allocInfo, &commandBuffers[0]) != C.VK_SUCCESS {
+		panic("vkAllocateCommandBuffers failed")
+	}
+
+	for i, commandBuffer := range commandBuffers {
+		beginInfo := C.VkCommandBufferBeginInfo{
+			sType: C.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			// flags:            0,   // Optional
+			// pInheritanceInfo: nil, // Optional
+		}
+
+		if C.vkBeginCommandBuffer(commandBuffer, &beginInfo) != C.VK_SUCCESS {
+			panic("vkBeginCommandBuffer failed")
+		}
+
+		renderPassInfo := C.VkRenderPassBeginInfo{
+			sType:       C.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+			renderPass:  renderPass,
+			framebuffer: framebuffers[i],
+			renderArea: C.VkRect2D{
+				offset: C.VkOffset2D{0, 0},
+				extent: swapchain.Extent,
+			},
+		}
+
+		// clearColor := C.VkClearValue{0.0, 0.0, 0.0, 1.0}
+		renderPassInfo.clearValueCount = 1
+		renderPassInfo.pClearValues = C.defaultClearColor
+
+		C.vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, C.VK_SUBPASS_CONTENTS_INLINE)
+
+		C.vkCmdBindPipeline(commandBuffer, C.VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline)
+
+		C.vkCmdDraw(commandBuffer, 3, 1, 0, 0)
+
+		C.vkCmdEndRenderPass(commandBuffer)
+
+		if C.vkEndCommandBuffer(commandBuffer) != C.VK_SUCCESS {
+			panic("vkEndCommandBuffer failed")
+		}
+	}
+
+	return commandBuffers
 }
 
-func (cmd CommandBuffer) BeginCommandBuffer() {
-
-}
-
-func (cmd CommandBuffer) BeginRenderPass() {}
-
-func (cmd CommandBuffer) BindPipeline() {}
-
-func (cmd CommandBuffer) Draw() {}
-
-func (cmd CommandBuffer) EndRenderPass() {}
-
-func (cmd CommandBuffer) EndCommandBuffer() {}
-
-func (dev Device) CreateCommandPool(queueFamilyIndex C.uint) C.VkCommandPool {
+func createCommandPool(device C.VkDevice, indices QueueFamilyIndices) C.VkCommandPool {
 	poolInfo := C.VkCommandPoolCreateInfo{
 		sType:            C.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		queueFamilyIndex: queueFamilyIndex,
+		queueFamilyIndex: indices.graphicsFamily,
 		flags:            0, // Optional
 	}
 	var commandPool C.VkCommandPool
-	if C.vkCreateCommandPool(dev.vkDevice, &poolInfo, nil, &commandPool) != C.VK_SUCCESS {
+	if C.vkCreateCommandPool(device, &poolInfo, nil, &commandPool) != C.VK_SUCCESS {
 		panic("vkCreateCommandPool failed")
 	}
 	return commandPool
+}
+
+func createFramebuffers(device C.VkDevice, swapchain Swapchain, renderPass C.VkRenderPass) []C.VkFramebuffer {
+	framebuffers := make([]C.VkFramebuffer, len(swapchain.ImageViews))
+	for i, iv := range swapchain.ImageViews {
+		n := 1
+		pAttachments := (*C.VkImageView)(C.malloc(C.size_t(n) * C.sizeof_VkImageView))
+		qAttachments := (*[1 << 30]C.VkImageView)(unsafe.Pointer(pAttachments))[:n:n]
+		qAttachments[0] = iv
+
+		framebufferInfo := (*C.VkFramebufferCreateInfo)(C.malloc(C.sizeof_VkFramebufferCreateInfo))
+		*framebufferInfo = C.VkFramebufferCreateInfo{
+			sType:           C.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			renderPass:      renderPass,
+			attachmentCount: 1,
+			pAttachments:    pAttachments,
+			width:           swapchain.Extent.width,
+			height:          swapchain.Extent.height,
+			layers:          1,
+		}
+
+		if C.vkCreateFramebuffer(device, framebufferInfo, nil, &framebuffers[i]) != C.VK_SUCCESS {
+			panic("vkCreateFramebuffer failed")
+		}
+	}
+
+	fmt.Println("framebuffers:", len(framebuffers))
+	return framebuffers
+}
+
+func createRenderPass(device C.VkDevice, swapchain Swapchain) C.VkRenderPass {
+	colorAttachment := (*C.VkAttachmentDescription)(C.malloc(C.sizeof_VkAttachmentDescription))
+	*colorAttachment = C.VkAttachmentDescription{
+		format:         swapchain.ImageFormat,
+		samples:        C.VK_SAMPLE_COUNT_1_BIT,
+		loadOp:         C.VK_ATTACHMENT_LOAD_OP_CLEAR,
+		storeOp:        C.VK_ATTACHMENT_STORE_OP_STORE,
+		stencilLoadOp:  C.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+		stencilStoreOp: C.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		initialLayout:  C.VK_IMAGE_LAYOUT_UNDEFINED,
+		finalLayout:    C.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+	}
+
+	colorAttachmentRef := (*C.VkAttachmentReference)(C.malloc(C.sizeof_VkAttachmentReference))
+	*colorAttachmentRef = C.VkAttachmentReference{
+		attachment: 0,
+		layout:     C.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	}
+
+	subpass := (*C.VkSubpassDescription)(C.malloc(C.sizeof_VkSubpassDescription))
+	*subpass = C.VkSubpassDescription{
+		pipelineBindPoint:    C.VK_PIPELINE_BIND_POINT_GRAPHICS,
+		colorAttachmentCount: 1,
+		pColorAttachments:    colorAttachmentRef,
+	}
+
+	dependency := (*C.VkSubpassDependency)(C.malloc(C.sizeof_VkSubpassDependency))
+	*dependency = C.VkSubpassDependency{
+		srcSubpass:    C.VK_SUBPASS_EXTERNAL,
+		dstSubpass:    0,
+		srcStageMask:  C.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		srcAccessMask: 0,
+		dstStageMask:  C.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		dstAccessMask: C.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | C.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+	}
+
+	var renderPass C.VkRenderPass
+	renderPassInfo := C.VkRenderPassCreateInfo{
+		sType:           C.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+		attachmentCount: 1,
+		pAttachments:    colorAttachment,
+		subpassCount:    1,
+		pSubpasses:      subpass,
+		dependencyCount: 1,
+		pDependencies:   dependency,
+	}
+	if C.vkCreateRenderPass(device, &renderPassInfo, nil, &renderPass) != C.VK_SUCCESS {
+		panic("vkCreateRenderPass failed")
+	}
+	return renderPass
 }
 
 type ShaderModule struct {
@@ -562,10 +714,10 @@ func (sm ShaderModule) Destroy(dev Device) {
 type ShaderAsset string
 
 func (name ShaderAsset) Module(dev Device) ShaderModule {
-	return dev.CreateShaderModule(mustReadFile(string(name)))
+	return ShaderModule{createShaderModule(dev.vkDevice, mustReadFile(string(name)))}
 }
 
-func (dev Device) CreateShaderModule(code []byte) ShaderModule {
+func createShaderModule(device C.VkDevice, code []byte) C.VkShaderModule {
 	// TODO this may not be appropriate, passing in bytes allocated in go to c,
 	// but i think it should be ok, just double check at some point
 	createInfo := (*C.VkShaderModuleCreateInfo)(C.malloc(C.sizeof_VkShaderModuleCreateInfo))
@@ -575,28 +727,14 @@ func (dev Device) CreateShaderModule(code []byte) ShaderModule {
 		pCode:    (*C.uint)(unsafe.Pointer(&code[0])),
 	}
 
-	var shaderModule ShaderModule
-	if C.vkCreateShaderModule(dev.vkDevice, createInfo, nil, &shaderModule.vkShaderModule) != C.VK_SUCCESS {
+	var shaderModule C.VkShaderModule
+	if C.vkCreateShaderModule(device, createInfo, nil, &shaderModule) != C.VK_SUCCESS {
 		panic("vkCreateShaderModule failed")
 	}
 	return shaderModule
 }
 
-type Pipeline struct {
-	vkDevice C.VkDevice
-	vkPipeline C.VkPipeline
-	vkPipelineLayout C.VkPipelineLayout
-}
-
-func (pipeline Pipeline) Destroy() {
-	fmt.Printf("Pipeline: %+v\n", pipeline)
-	C.vkDestroyPipeline(pipeline.vkDevice, pipeline.vkPipeline, nil)
-	C.vkDestroyPipelineLayout(pipeline.vkDevice, pipeline.vkPipelineLayout, nil)
-}
-
-func (dev Device) CreateGraphicsPipeline(swapchain *Swapchain, renderPass C.VkRenderPass) Pipeline {
-	pipeline := Pipeline{vkDevice: dev.vkDevice}
-
+func createGraphicsPipeline(device Device, swapchain Swapchain, renderPass C.VkRenderPass) (C.VkPipeline, C.VkPipelineLayout) {
 	vertAsset := ShaderAsset("shaders/vert.spv")
 	fragAsset := ShaderAsset("shaders/frag.spv")
 
@@ -608,8 +746,8 @@ func (dev Device) CreateGraphicsPipeline(swapchain *Swapchain, renderPass C.VkRe
 	// fragShaderModule := createShaderModule(device, fragShaderCode)
 	// defer C.vkDestroyShaderModule(device, fragShaderModule, nil)
 
-	vertModule := vertAsset.Module(dev)
-	fragModule := fragAsset.Module(dev)
+	vertModule := vertAsset.Module(device)
+	fragModule := fragAsset.Module(device)
 
 	vertShaderStageInfo := C.VkPipelineShaderStageCreateInfo{
 		sType:  C.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -749,6 +887,8 @@ func (dev Device) CreateGraphicsPipeline(swapchain *Swapchain, renderPass C.VkRe
 		pDynamicStates:    pDynamicStates,
 	}
 
+	// maybe set this up elsewhere with matching defer destroy
+	var pipelineLayout C.VkPipelineLayout
 	pipelineLayoutInfo := C.VkPipelineLayoutCreateInfo{
 		sType:                  C.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 		setLayoutCount:         0,   // Optional
@@ -756,7 +896,7 @@ func (dev Device) CreateGraphicsPipeline(swapchain *Swapchain, renderPass C.VkRe
 		pushConstantRangeCount: 0,   // Optional
 		pPushConstantRanges:    nil, // Optional
 	}
-	if C.vkCreatePipelineLayout(dev.vkDevice, &pipelineLayoutInfo, nil, &pipeline.vkPipelineLayout) != C.VK_SUCCESS {
+	if C.vkCreatePipelineLayout(device.vkDevice, &pipelineLayoutInfo, nil, &pipelineLayout) != C.VK_SUCCESS {
 		panic("vkCreatePipelineLayout failed")
 	}
 
@@ -774,7 +914,7 @@ func (dev Device) CreateGraphicsPipeline(swapchain *Swapchain, renderPass C.VkRe
 		pColorBlendState:    colorBlending,
 		pDynamicState:       nil, // Optional
 
-		layout: pipeline.vkPipelineLayout,
+		layout: pipelineLayout,
 
 		renderPass: renderPass,
 		subpass:    0,
@@ -782,11 +922,13 @@ func (dev Device) CreateGraphicsPipeline(swapchain *Swapchain, renderPass C.VkRe
 		// basePipelineHandle: VK_NULL_HANDLE, // Optional
 		// basePipelineIndex:  -1,             // Optional
 	}
-	if C.vkCreateGraphicsPipelines(dev.vkDevice, C.VkPipelineCache(vkNullHandle), 1, &pipelineInfo, nil, &pipeline.vkPipeline) != C.VK_SUCCESS {
+
+	var graphicsPipeline C.VkPipeline
+	if C.vkCreateGraphicsPipelines(device.vkDevice, C.VkPipelineCache(vkNullHandle), 1, &pipelineInfo, nil, &graphicsPipeline) != C.VK_SUCCESS {
 		panic("vkCreateGraphicsPipelines failed")
 	}
 
-	return pipeline
+	return graphicsPipeline, pipelineLayout
 }
 
 func isDeviceSuitable(device C.VkPhysicalDevice, surface C.VkSurfaceKHR) bool {
@@ -834,8 +976,6 @@ type Device struct {
 	surface *WindowSurface
 
 	indices QueueFamilyIndices
-
-	commandPool C.VkCommandPool
 }
 
 type QueueFamilyIndices struct {
@@ -897,15 +1037,15 @@ func (device Device) GetPresentQueue(index C.uint) C.VkQueue {
 	return device.GetQueue(device.indices.presentFamily, index)
 }
 
-// func (device Device) CreateSwapchain(width, height uint) (Swapchain, error) {
-// 	swapchain := Swapchain{
-// 		device: device,
-// 	}
-// 	if err := swapchain.Create(device, width, height); err != nil {
-// 		return Swapchain{}, err
-// 	}
-// 	return swapchain, nil
-// }
+func (device Device) CreateSwapchain() (Swapchain, error) {
+	swapchain := Swapchain{
+		device: device,
+	}
+	if err := swapchain.Create(device); err != nil {
+		return Swapchain{}, err
+	}
+	return swapchain, nil
+}
 
 func (device Device) CreateSemaphore() Semaphore {
 	s := Semaphore{vkDevice: device.vkDevice}
@@ -915,56 +1055,195 @@ func (device Device) CreateSemaphore() Semaphore {
 	return s
 }
 
-func (dev Device) CreateRenderPass(swapchain *Swapchain) C.VkRenderPass {
-	colorAttachment := (*C.VkAttachmentDescription)(C.malloc(C.sizeof_VkAttachmentDescription))
-	*colorAttachment = C.VkAttachmentDescription{
-		format:         swapchain.ImageFormat,
-		samples:        C.VK_SAMPLE_COUNT_1_BIT,
-		loadOp:         C.VK_ATTACHMENT_LOAD_OP_CLEAR,
-		storeOp:        C.VK_ATTACHMENT_STORE_OP_STORE,
-		stencilLoadOp:  C.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		stencilStoreOp: C.VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		initialLayout:  C.VK_IMAGE_LAYOUT_UNDEFINED,
-		finalLayout:    C.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+// *******************
+// Swapchain
+// *******************
+
+type SwapchainSupport struct {
+	Capabilities C.VkSurfaceCapabilitiesKHR
+	Formats      []C.VkSurfaceFormatKHR
+	PresentModes []C.VkPresentModeKHR
+}
+
+func GetSwapchainSupport(device C.VkPhysicalDevice, surface C.VkSurfaceKHR) SwapchainSupport {
+	var ss SwapchainSupport
+	C.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &ss.Capabilities)
+
+	var nformats C.uint
+	C.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &nformats, nil)
+	if nformats > 0 {
+		p := (*C.VkSurfaceFormatKHR)(C.malloc(C.size_t(nformats) * C.sizeof_VkSurfaceFormatKHR))
+		C.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &nformats, p)
+		ss.Formats = (*[1 << 30]C.VkSurfaceFormatKHR)(unsafe.Pointer(p))[:nformats:nformats]
 	}
 
-	colorAttachmentRef := (*C.VkAttachmentReference)(C.malloc(C.sizeof_VkAttachmentReference))
-	*colorAttachmentRef = C.VkAttachmentReference{
-		attachment: 0,
-		layout:     C.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	var nmodes C.uint
+	C.vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &nmodes, nil)
+	if nmodes > 0 {
+		p := (*C.VkPresentModeKHR)(C.malloc(C.size_t(nmodes) * C.sizeof_VkPresentModeKHR))
+		C.vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &nmodes, p)
+		ss.PresentModes = (*[1 << 30]C.VkPresentModeKHR)(unsafe.Pointer(p))[:nmodes:nmodes]
 	}
 
-	subpass := (*C.VkSubpassDescription)(C.malloc(C.sizeof_VkSubpassDescription))
-	*subpass = C.VkSubpassDescription{
-		pipelineBindPoint:    C.VK_PIPELINE_BIND_POINT_GRAPHICS,
-		colorAttachmentCount: 1,
-		pColorAttachments:    colorAttachmentRef,
+	return ss
+}
+
+func (details SwapchainSupport) ChooseSurfaceFormat() C.VkSurfaceFormatKHR {
+	for _, f := range details.Formats {
+		if f.format == C.VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == C.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR {
+			return f
+		}
+	}
+	return details.Formats[0]
+}
+
+func (details SwapchainSupport) ChoosePresentMode() C.VkPresentModeKHR {
+	for _, m := range details.PresentModes {
+		if m == C.VK_PRESENT_MODE_MAILBOX_KHR {
+			return m
+		}
+	}
+	return C.VK_PRESENT_MODE_FIFO_KHR
+	// sometimes the above is buggy and below is preferred, haven't gotten far enough to know myself
+	// apparently being buggy is outdated, still keep in mind the below
+	// return VK_PRESENT_MODE_IMMEDIATE_KHR
+}
+
+func (ss SwapchainSupport) ChooseExtent() C.VkExtent2D {
+	// The swap extent is the resolution of the swap chain images
+	if ss.Capabilities.currentExtent.width != math.MaxUint32 {
+		return ss.Capabilities.currentExtent
 	}
 
-	dependency := (*C.VkSubpassDependency)(C.malloc(C.sizeof_VkSubpassDependency))
-	*dependency = C.VkSubpassDependency{
-		srcSubpass:    C.VK_SUBPASS_EXTERNAL,
-		dstSubpass:    0,
-		srcStageMask:  C.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		srcAccessMask: 0,
-		dstStageMask:  C.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		dstAccessMask: C.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | C.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+	extent := C.VkExtent2D{Width, Height}
+	extent.width = cclampu32(extent.width, ss.Capabilities.minImageExtent.width, ss.Capabilities.maxImageExtent.width)
+	extent.height = cclampu32(extent.height, ss.Capabilities.minImageExtent.height, ss.Capabilities.maxImageExtent.height)
+	return extent
+}
+
+type Swapchain struct {
+	device      Device
+	vkSwapchain C.VkSwapchainKHR
+
+	ImageFormat C.VkFormat
+	Extent      C.VkExtent2D
+
+	images     []C.VkImage
+	ImageViews []C.VkImageView
+}
+
+func (sc *Swapchain) Create(device Device) error {
+	ss := GetSwapchainSupport(device.vkPhysicalDevice, device.surface.vkSurface)
+
+	surfaceFormat := ss.ChooseSurfaceFormat()
+	presentMode := ss.ChoosePresentMode()
+	extent := ss.ChooseExtent()
+
+	// take the minimum plus one so we do not ahve to wait on driver to complete internal ops
+	// before we can acquire and render to another image
+	imageCount := ss.Capabilities.minImageCount + 1
+	if ss.Capabilities.maxImageCount > 0 && imageCount > ss.Capabilities.maxImageCount {
+		imageCount = ss.Capabilities.maxImageCount
 	}
 
-	var renderPass C.VkRenderPass
-	renderPassInfo := C.VkRenderPassCreateInfo{
-		sType:           C.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-		attachmentCount: 1,
-		pAttachments:    colorAttachment,
-		subpassCount:    1,
-		pSubpasses:      subpass,
-		dependencyCount: 1,
-		pDependencies:   dependency,
+	fmt.Println("capabilities.minImageCount:", ss.Capabilities.minImageCount)
+	fmt.Println("capabilities.maxImageCount:", ss.Capabilities.maxImageCount)
+	fmt.Println("swapchainCreateInfo.imageCount:", imageCount)
+
+	createInfo := C.VkSwapchainCreateInfoKHR{
+		sType:            C.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		surface:          device.surface.vkSurface,
+		minImageCount:    imageCount,
+		imageFormat:      surfaceFormat.format,
+		imageColorSpace:  surfaceFormat.colorSpace,
+		imageExtent:      extent,
+		imageArrayLayers: 1, // always 1 unless making stereoscopic 3d app
+		imageUsage:       C.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 	}
-	if C.vkCreateRenderPass(dev.vkDevice, &renderPassInfo, nil, &renderPass) != C.VK_SUCCESS {
-		panic("vkCreateRenderPass failed")
+
+	queueFamilyIndices := []C.uint{device.indices.graphicsFamily, device.indices.presentFamily}
+
+	// TODO first case breaks b/c im not properly creating separate queues yet given i skipped over it
+	if device.indices.graphicsFamily != device.indices.presentFamily {
+		createInfo.imageSharingMode = C.VK_SHARING_MODE_CONCURRENT
+		createInfo.queueFamilyIndexCount = 2
+		createInfo.pQueueFamilyIndices = &queueFamilyIndices[0]
+	} else {
+		createInfo.imageSharingMode = C.VK_SHARING_MODE_EXCLUSIVE
+		createInfo.queueFamilyIndexCount = 0
+		createInfo.pQueueFamilyIndices = nil
 	}
-	return renderPass
+
+	createInfo.preTransform = ss.Capabilities.currentTransform
+
+	createInfo.compositeAlpha = C.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+
+	createInfo.presentMode = presentMode
+	createInfo.clipped = C.VK_TRUE
+
+	// TODO don't know how i'd possibly set this ..
+	// createInfo.oldSwapchain = C.VK_NULL_HANDLE
+
+	sc.ImageFormat = surfaceFormat.format
+	sc.Extent = extent
+
+	if C.vkCreateSwapchainKHR(sc.device.vkDevice, &createInfo, nil, &sc.vkSwapchain) != C.VK_SUCCESS {
+		return fmt.Errorf("vkCreateSwapchainKHR failed")
+	}
+	return nil
+}
+
+func (sc *Swapchain) getImages() {
+	var n C.uint
+	C.vkGetSwapchainImagesKHR(sc.device.vkDevice, sc.vkSwapchain, &n, nil)
+	p := (*C.VkImage)(C.malloc(C.size_t(n) * C.sizeof_VkImage))
+	C.vkGetSwapchainImagesKHR(sc.device.vkDevice, sc.vkSwapchain, &n, p)
+	sc.images = (*[1 << 30]C.VkImage)(unsafe.Pointer(p))[:n:n]
+	fmt.Println("len(sc.images):", len(sc.images))
+}
+
+func (sc *Swapchain) CreateImageViews() {
+	if len(sc.images) == 0 {
+		sc.getImages()
+	}
+
+	sc.ImageViews = make([]C.VkImageView, len(sc.images))
+	for i := range sc.ImageViews {
+		createInfo := C.VkImageViewCreateInfo{
+			sType:    C.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			image:    sc.images[i],
+			viewType: C.VK_IMAGE_VIEW_TYPE_2D,
+			format:   sc.ImageFormat,
+			components: C.VkComponentMapping{
+				r: C.VK_COMPONENT_SWIZZLE_IDENTITY,
+				g: C.VK_COMPONENT_SWIZZLE_IDENTITY,
+				b: C.VK_COMPONENT_SWIZZLE_IDENTITY,
+				a: C.VK_COMPONENT_SWIZZLE_IDENTITY,
+			},
+			subresourceRange: C.VkImageSubresourceRange{
+				aspectMask:     C.VK_IMAGE_ASPECT_COLOR_BIT,
+				baseMipLevel:   0,
+				levelCount:     1,
+				baseArrayLayer: 0,
+				layerCount:     1,
+			},
+		}
+
+		if C.vkCreateImageView(sc.device.vkDevice, &createInfo, nil, &sc.ImageViews[i]) != C.VK_SUCCESS {
+			panic("vkCreateImageView failed")
+		}
+	}
+	fmt.Println("created imageviews")
+}
+
+func (sc Swapchain) Destroy() {
+	C.vkDestroySwapchainKHR(sc.device.vkDevice, sc.vkSwapchain, nil)
+}
+
+func (sc Swapchain) DestroyImageViews() {
+	for _, iv := range sc.ImageViews {
+		C.vkDestroyImageView(sc.device.vkDevice, iv, nil)
+	}
 }
 
 // *******************
@@ -992,7 +1271,7 @@ func goStringSlice(p **C.char, n C.uint) []string {
 }
 
 func mustReadFile(filename string) []byte {
-	bin, err := os.ReadFile(filename)
+	bin, err := ioutil.ReadFile(filename)
 	if err != nil {
 		panic(err)
 	}
