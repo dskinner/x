@@ -15,7 +15,7 @@ func Example() {
 	}
 
 	// filter without allocating
-	b := set.StringSlice(a[:0])
+	b := set.Slice[string](a[:0])
 	for _, x := range a {
 		b.Insert(x)
 	}
