@@ -65,8 +65,8 @@ func colmul16fv(a, b f32.Mat4) f32.Mat4 {
 var m f32.Mat4
 
 func BenchmarkRowMul16fv(b *testing.B) {
-	q0 := quat(45, f32.Vec3{0, 0, 1})
-	q1 := quat(90, f32.Vec3{0, 0, 1})
+	q0 := Quat(45, f32.Vec3{0, 0, 1})
+	q1 := Quat(90, f32.Vec3{0, 0, 1})
 	m0, m1 := quat16fv(q0), quat16fv(q1)
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -75,8 +75,8 @@ func BenchmarkRowMul16fv(b *testing.B) {
 }
 
 func BenchmarkColMul16fv(b *testing.B) {
-	q0 := quat(45, f32.Vec3{0, 0, 1})
-	q1 := quat(90, f32.Vec3{0, 0, 1})
+	q0 := Quat(45, f32.Vec3{0, 0, 1})
+	q1 := Quat(90, f32.Vec3{0, 0, 1})
 	m0, m1 := quat16fv(q0), quat16fv(q1)
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {

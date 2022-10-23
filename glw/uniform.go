@@ -3,9 +3,13 @@ package glw
 import (
 	"time"
 
+	"github.com/go-gl/gl/v4.1-core/gl"
 	"golang.org/x/image/math/f32"
-	"golang.org/x/mobile/gl"
 )
+
+type UniformLocation struct {
+	Value int32
+}
 
 type Uniform interface {
 	// Animator allows setting additional options.
@@ -29,14 +33,14 @@ type Uniform interface {
 }
 
 type uniform struct {
-	gl.Uniform
+	UniformLocation
 	animator  *animator
 	animating uint32
 	update    func()
 }
 
-func newuniform(a gl.Uniform, update func()) *uniform {
-	u := &uniform{Uniform: a, animator: newanimator(), update: update}
+func newuniform(a UniformLocation, update func()) *uniform {
+	u := &uniform{UniformLocation: a, animator: newanimator(), update: update}
 	u.animator.Apply(Notify(&u.animating))
 	return u
 }
@@ -66,46 +70,50 @@ func (u *uniform) Transform(transforms ...func(Transformer)) {
 	u.animator.Start(transforms...)
 }
 
-type U1i gl.Uniform
+type U1i UniformLocation
 
-func (u U1i) Set(v int) { ctx.Uniform1i(gl.Uniform(u), v) }
+func (u U1i) Set(v int32) { gl.Uniform1i(u.Value, v) }
 
-type U2i gl.Uniform
+type U2i UniformLocation
 
-func (u U2i) Set(v0, v1 int) { ctx.Uniform2i(gl.Uniform(u), v0, v1) }
+func (u U2i) Set(v0, v1 int32) { gl.Uniform2i(u.Value, v0, v1) }
 
-type U3i gl.Uniform
+type U3i UniformLocation
 
-func (u U3i) Set(v0, v1, v2 int32) { ctx.Uniform3i(gl.Uniform(u), v0, v1, v2) }
+func (u U3i) Set(v0, v1, v2 int32) { gl.Uniform3i(u.Value, v0, v1, v2) }
 
-type U4i gl.Uniform
+type U4i UniformLocation
 
-func (u U4i) Set(v0, v1, v2, v3 int32) { ctx.Uniform4i(gl.Uniform(u), v0, v1, v2, v3) }
+func (u U4i) Set(v0, v1, v2, v3 int32) { gl.Uniform4i(u.Value, v0, v1, v2, v3) }
 
 type U1f struct{ *uniform }
 
-func (u *U1f) Update() { ctx.Uniform1f(u.Uniform, u.animator.pt.eval1f()) }
+func (u *U1f) Update() { gl.Uniform1f(u.Value, u.animator.pt.eval1f()) }
 
 type U2fv struct {
-	gl.Uniform
-	v f32.Vec2
+	UniformLocation
+	v       f32.Vec2
 }
 
-func (u U2fv) Update() { ctx.Uniform2fv(u.Uniform, u.v[:]) }
+func (u U2fv) Update() {
+	gl.Uniform2fv(u.Value, 1, &u.v[0])
+}
 
 func (u *U2fv) Set(v f32.Vec2) { u.v = v }
 
 type U3fv struct {
-	gl.Uniform
-	v f32.Vec3
+	UniformLocation
+	v       f32.Vec3
 }
 
-func (u U3fv) Update() { ctx.Uniform3fv(u.Uniform, u.v[:]) }
+func (u U3fv) Update() {
+	gl.Uniform3fv(u.Value, 1, &u.v[0])
+}
 
 func (u U3fv) Set(v f32.Vec3) { u.v = v }
 
 type U4fv struct {
-	gl.Uniform
+	UniformLocation
 	animating uint32
 
 	v f32.Vec4
@@ -116,16 +124,16 @@ func (u U4fv) Update() {
 	if u.a != nil {
 		u.v = u.a.pt.eval4fv()
 	}
-	ctx.Uniform4fv(u.Uniform, u.v[:])
+	gl.Uniform4fv(u.Value, 1, &u.v[0])
 }
 
-func (u *U4fv) Set(v f32.Vec4) {
-	if u.a != nil {
-		u.a.pt.Translate = v
-	}
-	u.v = v
-	ctx.Uniform4fv(u.Uniform, u.v[:])
-}
+// func (u *U4fv) Set(v f32.Vec4) {
+// 	if u.a != nil {
+// 		u.a.pt.Translate = v
+// 	}
+// 	u.v = v
+// 	gl.Uniform4fv(u.Value, 1, &u.v[0])
+// }
 
 func (u *U4fv) Animator(options ...func(Animator)) Animator {
 	if u.a == nil {
@@ -151,19 +159,21 @@ func (u *U4fv) Step(now time.Time) (ok bool) {
 	return ok
 }
 
-type U9fv gl.Uniform
+type U9fv UniformLocation
 
-func (u U9fv) Set(m f32.Mat3) { ctx.UniformMatrix4fv(gl.Uniform(u), m[:]) }
+func (u U9fv) Set(m f32.Mat3) {
+	gl.UniformMatrix3fv(u.Value, 1, false, &m[0])
+}
 
 type U16fv struct{ *uniform }
 
 func (u *U16fv) Update() {
-	m := u.animator.pt.eval16fv()
-	ctx.UniformMatrix4fv(u.Uniform, m[:])
+	m := u.animator.pt.Eval16fv()
+	gl.UniformMatrix4fv(u.Value, 1, false, &m[0])
 }
 
 func (u *U16fv) Inv2f(nx, ny float32) (float32, float32) {
-	m := u.animator.pt.eval16fv()
+	m := u.animator.pt.Eval16fv()
 	return nx*(1/m[0]) + ny*m[1], nx*m[4] + ny*(1/m[5])
 
 	// m := inv16fv(u.animator.pt.eval16fv())
@@ -171,17 +181,15 @@ func (u *U16fv) Inv2f(nx, ny float32) (float32, float32) {
 }
 
 func (u *U16fv) Ortho(l, r float32, b, t float32, n, f float32) {
-	u.animator.to.TranslateTo(f32.Vec4{
+	u.animator.to.TranslateTo(f32.Vec3{
 		-(r + l) / (r - l),
 		-(t + b) / (t - b),
 		-(f + n) / (f - n),
-		1,
 	})
-	u.animator.to.ScaleTo(f32.Vec4{
+	u.animator.to.ScaleTo(f32.Vec3{
 		+2 / (r - l),
 		+2 / (t - b),
 		-2 / (f - n),
-		1,
 	})
 	u.animator.at = u.animator.to
 	u.animator.pt = u.animator.to
@@ -189,5 +197,5 @@ func (u *U16fv) Ortho(l, r float32, b, t float32, n, f float32) {
 }
 
 func (u U16fv) String() string {
-	return string16fv(u.animator.pt.eval16fv())
+	return string16fv(u.animator.pt.Eval16fv())
 }

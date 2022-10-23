@@ -9,6 +9,10 @@ import (
 
 // https://www.youtube.com/watch?v=PNlgMPzj-7Q&list=PLpzmRsG7u_gqaTo_vEseQ7U8KFvtiJY4K&index=1
 
+type Vec2 f32.Vec2
+type Vec3 f32.Vec3
+type Vec4 f32.Vec4
+
 // z4fv is zero value of Vec4.
 var z4fv f32.Vec4
 
@@ -18,13 +22,30 @@ func Uton(u float32) float32 { return 2*u - 1 }
 // Ntou converts norm to unit.
 func Ntou(n float32) float32 { return (n + 1) / 2 }
 
-func Vec2(v0, v1 float32) f32.Vec2         { return f32.Vec2{v0, v1} }
-func Vec3(v0, v1, v2 float32) f32.Vec3     { return f32.Vec3{v0, v1, v2} }
-func Vec4(v0, v1, v2, v3 float32) f32.Vec4 { return f32.Vec4{v0, v1, v2, v3} }
-
-func quat(angle float32, axis f32.Vec3) f32.Vec4 {
+func Quat(angle float32, axis f32.Vec3) f32.Vec4 {
 	c, s := float32(math.Cos(float64(angle/2))), float32(math.Sin(float64(angle/2)))
 	return f32.Vec4{c, axis[0] * s, axis[1] * s, axis[2] * s}
+}
+
+func QuatMul(a, b f32.Vec4) f32.Vec4 {
+	// (sa,va) * (sb,vb) = (sa*sb-va•vb, va × vb + sa*vb + sb*va)
+	return f32.Vec4{
+		a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
+		a[2]*b[3] - b[2]*a[3] + a[0]*b[1] + b[0]*a[1],
+		b[1]*a[3] - a[1]*b[3] + a[0]*b[2] + b[0]*a[2],
+		a[1]*b[2] - b[1]*a[2] + a[0]*b[3] + b[0]*a[3],
+	}
+}
+
+func QuatConj(a f32.Vec4) f32.Vec4 {
+	return f32.Vec4{a[0], -a[1], -a[2], -a[3]}
+}
+
+func QuatRot3f(r f32.Vec4, x, y, z float32) f32.Vec3 {
+	p := f32.Vec4{0, x, y, z}
+	c := QuatConj(r)
+	v := QuatMul(QuatMul(r, p), c)
+	return f32.Vec3{v[1], v[2], v[3]}
 }
 
 // http://www.euclideanspace.com/maths/geometry/rotations/conversions/quaternionToMatrix/
@@ -58,7 +79,7 @@ func ident16fv() f32.Mat4 {
 }
 
 // translationIdent returns column-major translation matrix by given translate and shear vectors.
-func translationIdent(translate f32.Vec4, shear f32.Vec4) f32.Mat4 {
+func translationIdent(translate f32.Vec3, shear f32.Vec3) f32.Mat4 {
 	x, y, z := translate[0], translate[1], translate[2]
 	a, b, c := shear[0], shear[1], shear[2]
 	return f32.Mat4{
@@ -69,13 +90,13 @@ func translationIdent(translate f32.Vec4, shear f32.Vec4) f32.Mat4 {
 	}
 }
 
-func scaleIdent(a f32.Vec4) f32.Mat4 {
-	w, h, d, i := a[0], a[1], a[2], a[3]
+func scaleIdent(a f32.Vec3) f32.Mat4 {
+	w, h, d := a[0], a[1], a[2]
 	return f32.Mat4{
 		w, 0, 0, 0,
 		0, h, 0, 0,
 		0, 0, d, 0,
-		0, 0, 0, i,
+		0, 0, 0, 1,
 	}
 }
 
@@ -117,6 +138,40 @@ func transpose16fv(m f32.Mat4) f32.Mat4 {
 	}
 }
 
+func add3fv(a, b f32.Vec3) f32.Vec3 {
+	return f32.Vec3{a[0] + b[0], a[1] + b[1], a[2] + b[2]}
+}
+
+func add4fv(a, b f32.Vec4) f32.Vec4 {
+	return f32.Vec4{a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]}
+}
+
+func mul3fv(a, b f32.Vec3) f32.Vec3 {
+	return f32.Vec3{a[0] * b[0], a[1] * b[1], a[2] * b[2]}
+}
+
+func mul4fv(a, b f32.Vec4) f32.Vec4 {
+	return f32.Vec4{a[0] * b[0], a[1] * b[1], a[2] * b[2], a[3] * b[3]}
+}
+
+func len3fv(a f32.Vec3) float32 {
+	return float32(math.Sqrt(float64(a[0]*a[0] + a[1]*a[1] + a[2]*a[2])))
+}
+
+func len4fv(a f32.Vec4) float32 {
+	return float32(math.Sqrt(float64(a[0]*a[0] + a[1]*a[1] + a[2]*a[2] + a[3]*a[3])))
+}
+
+func norm3fv(a f32.Vec3) f32.Vec3 {
+	l := 1.0 / len3fv(a)
+	return f32.Vec3{a[0]*l, a[1]*l, a[2]*l}
+}
+
+func norm4fv(a f32.Vec4) f32.Vec4 {
+	l := 1.0 / len4fv(a)
+	return f32.Vec4{a[0]*l, a[1]*l, a[2]*l, a[3]*l}
+}
+
 func lerp3fv(a, b f32.Vec3, t float32) f32.Vec3 {
 	return f32.Vec3{
 		a[0] + t*(b[0]-a[0]),
@@ -134,26 +189,17 @@ func lerp4fv(a, b f32.Vec4, t float32) f32.Vec4 {
 	}
 }
 
-func add4fv(a, b f32.Vec4) f32.Vec4 {
-	return f32.Vec4{a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]}
-}
+// func cross3fv(a, b f32.Vec3) f32.Vec3 {
+// 	return f32.Vec3{
+// 		a[1]*b[2] - a[2]*b[1],
+// 		a[2]*b[0] - a[0]*b[2],
+// 		a[0]*b[1] - a[1]*b[0],
+// 	}
+// }
 
-func mul3fv(a, b f32.Vec3) f32.Vec3 {
-	return f32.Vec3{a[0] * b[0], a[1] * b[1], a[2] * b[2]}
-}
-
-func mul4fv(a, b f32.Vec4) f32.Vec4 {
-	return f32.Vec4{a[0] * b[0], a[1] * b[1], a[2] * b[2], a[3] * b[3]}
-}
-
-func mulquat(a, b f32.Vec4) f32.Vec4 {
-	return f32.Vec4{
-		a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
-		a[2]*b[3] - b[2]*a[3] + a[0]*b[1] + b[0]*a[1],
-		b[1]*a[3] - a[1]*b[3] + a[0]*b[2] + b[0]*a[2],
-		a[1]*b[2] - b[1]*a[2] + a[0]*b[3] + b[0]*a[3],
-	}
-}
+// func dot3fv(a, b f32.Vec3) float32 {
+// 	return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+// }
 
 func mul9fv(a, b f32.Mat3) (m f32.Mat3) {
 	// 0 1 2
@@ -201,34 +247,6 @@ func mul16fv(a, b f32.Mat4) f32.Mat4 {
 		a[12]*b[+3] + a[13]*b[+7] + a[14]*b[11] + a[15]*b[15],
 	}
 }
-
-// func mul16fv(a, b f32.Mat4) f32.Mat4 {
-// +0 +4 +8 12
-// +1 +5 +9 13
-// +2 +6 10 14
-// +3 +7 11 15
-// return f32.Mat4{
-// a[+0]*b[+0] + a[+4]*b[+1] + a[+8]*b[+2] + a[12]*b[+3],
-// a[+0]*b[+4] + a[+4]*b[+5] + a[+8]*b[+6] + a[12]*b[+7],
-// a[+0]*b[+8] + a[+4]*b[+9] + a[+8]*b[10] + a[12]*b[11],
-// a[+0]*b[12] + a[+4]*b[13] + a[+8]*b[14] + a[12]*b[15],
-
-// a[+1]*b[+0] + a[+5]*b[+1] + a[+9]*b[+2] + a[13]*b[+3],
-// a[+1]*b[+4] + a[+5]*b[+5] + a[+9]*b[+6] + a[13]*b[+7],
-// a[+1]*b[+8] + a[+5]*b[+9] + a[+9]*b[10] + a[13]*b[11],
-// a[+1]*b[12] + a[+5]*b[13] + a[+9]*b[14] + a[13]*b[15],
-
-// a[+2]*b[+0] + a[+6]*b[+1] + a[10]*b[+2] + a[14]*b[+3],
-// a[+2]*b[+4] + a[+6]*b[+5] + a[10]*b[+6] + a[14]*b[+7],
-// a[+2]*b[+8] + a[+6]*b[+9] + a[10]*b[10] + a[14]*b[11],
-// a[+2]*b[12] + a[+6]*b[13] + a[10]*b[14] + a[14]*b[15],
-
-// a[+3]*b[+0] + a[+7]*b[+1] + a[11]*b[+2] + a[15]*b[+3],
-// a[+3]*b[+4] + a[+7]*b[+5] + a[11]*b[+6] + a[15]*b[+7],
-// a[+3]*b[+8] + a[+7]*b[+9] + a[11]*b[10] + a[15]*b[11],
-// a[+3]*b[12] + a[+7]*b[13] + a[11]*b[14] + a[15]*b[15],
-// }
-// }
 
 func det16fv(m f32.Mat4) float32 {
 	return m[0]*(m[5]*(m[10]*m[15]-m[11]*m[14])-
