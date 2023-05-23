@@ -100,14 +100,33 @@ type VertexArray struct {
 	Offset int
 }
 
-// func (vert *VertexArray) Create(usage uint32, size int, floats []float32) {
-// 	vert.Size = size
-// 	vert.Floats.Create(usage, floats)
-// }
+// TODO deprecate
+/*
+should change uses as follows basically:
+	// x, y, z, u, v
+	obj.Vert.Floats.Create(gl.STATIC_DRAW, []float32{
+		-1, -1, -1, 1, 1,
+		-1, +1, -1, 1, 0,
+		+1, +1, -1, 0, 0,
+		+1, -1, -1, 0, 1,
+	})
+	obj.Vert.Uints.Create(gl.STATIC_DRAW, []uint32{0, 1, 2, 0, 2, 3})
+	obj.Vert.StepSize(3, 5, 0)
+	obj.Vert.Bind()
 
-// func (vert *VertexArray) Update(floats []float32) {
-// 	vert.Floats.Update(floats)
-// }
+	obj.TexCoord.Floats = obj.Vert.Floats
+	obj.TexCoord.StepSize(2, 5, 3)
+	obj.TexCoord.Bind()
+*/
+func (vert *VertexArray) Create(usage uint32, size int, floats []float32) {
+	vert.Size = size
+	vert.Floats.Create(usage, floats)
+}
+
+// TODO deprecate
+func (vert *VertexArray) Update(floats []float32) {
+	vert.Floats.Update(floats)
+}
 
 func (vert *VertexArray) StepSize(size, stride, offset int) {
 	vert.Size = size
@@ -143,17 +162,19 @@ type VertexElement struct {
 	Offset int
 }
 
-// func (vert *VertexElement) Create(usage uint32, size int, offset int, floats []float32, uints []uint32) {
-// 	vert.Size = size
-// 	vert.Offset = offset
-// 	vert.Floats.Create(usage, floats)
-// 	vert.Uints.Create(usage, uints)
-// }
+// TODO deprecate
+func (vert *VertexElement) Create(usage uint32, size int, offset int, floats []float32, uints []uint32) {
+	vert.Size = size
+	vert.Offset = offset
+	vert.Floats.Create(usage, floats)
+	vert.Uints.Create(usage, uints)
+}
 
-// func (vert *VertexElement) Update(floats []float32, uints []uint32) {
-// 	vert.Floats.Update(floats)
-// 	vert.Uints.Update(uints)
-// }
+// TODO deprecate
+func (vert *VertexElement) Update(floats []float32, uints []uint32) {
+	vert.Floats.Update(floats)
+	vert.Uints.Update(uints)
+}
 
 func (vert *VertexElement) StepSize(size, stride, offset int) {
 	vert.Size = size
