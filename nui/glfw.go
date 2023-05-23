@@ -21,7 +21,7 @@ func surface() (window *glfw.Window, terminate func()) {
 		panic(err)
 	}
 
-	glfw.WindowHint(glfw.ContextVersionMajor, 2)
+	glfw.WindowHint(glfw.ContextVersionMajor, 4)
 	glfw.WindowHint(glfw.ContextVersionMinor, 1)
 	window, err = glfw.CreateWindow(640, 480, "Testing", nil, nil)
 	if err != nil {
