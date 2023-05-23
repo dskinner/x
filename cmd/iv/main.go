@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"image"
+	"image/color"
+	"image/draw"
 	"log"
 	"net/http"
 	"net/url"
@@ -15,8 +17,6 @@ import (
 
 	"dasa.cc/x/glw"
 
-	"image/color"
-	"image/draw"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
@@ -133,7 +133,7 @@ func main() {
 	}
 
 	if *flagLogfile != "" {
-		logfile, err := os.OpenFile(*flagLogfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		logfile, err := os.OpenFile(*flagLogfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)
 		if err != nil {
 			log.Fatalf("error opening logfile: %v", err)
 		}
@@ -156,7 +156,7 @@ type sampler struct {
 func (a *sampler) init() {
 	a.Install(vsrc, fsrc)
 	a.Unmarshal(a)
-	a.Vertex.Create(gl.STATIC_DRAW, 3, box3fv, box3iv)
+	a.Vertex.Create(gl.STATIC_DRAW, 3, 0, box3fv, box3iv)
 	a.Texcoord.Create(gl.STATIC_DRAW, 2, tex2fv)
 	a.Sampler.Create()
 }
@@ -186,8 +186,11 @@ var gallery struct {
 	view View
 }
 
+var _ctx gl.Context
+
 func glinit(ctx gl.Context) {
-	ctx = glw.With(ctx)
+	// ctx = glw.With(ctx)
+	_ctx = ctx
 
 	gallery.init()
 	gallery.Model.Animator(glw.Duration(250 * time.Millisecond))
@@ -199,7 +202,7 @@ func glinit(ctx gl.Context) {
 
 func glresize(width, height int) {
 	viewport = image.Pt(width, height)
-	ctx := glw.Context()
+	ctx := _ctx
 	ctx.Disable(gl.CULL_FACE)
 	ctx.Disable(gl.DEPTH_TEST)
 	ctx.Enable(gl.BLEND)
@@ -223,7 +226,7 @@ func gldraw() {
 	}
 
 	now := time.Now()
-	ctx := glw.Context()
+	ctx := _ctx
 	ctx.Clear(gl.COLOR_BUFFER_BIT)
 
 	gallery.Use()
@@ -287,7 +290,7 @@ func handleGesture(now time.Time) {
 	e := gesturer.emouse
 	x, y := glw.Uton(e.X/float32(viewport.X)), glw.Uton(e.Y/float32(viewport.Y))
 	x, y = gallery.Proj.Inv2f(x, y)
-	gallery.Model.Stage(now, glw.TranslateTo(f32.Vec4{x, y, 0, 0}))
+	gallery.Model.Stage(now, glw.TranslateTo(f32.Vec3{x, y, 0}))
 	glwidget.Mark(node.MarkNeedsPaintBase)
 	gesturer.pending = false
 }
@@ -388,16 +391,16 @@ func transforms() []func(glw.Transformer) {
 		state.invf = 1
 	}
 	if state.panLeft {
-		p = append(p, glw.TranslateBy(f32.Vec4{-x * state.invf, 0, 0, 0}))
+		p = append(p, glw.TranslateBy(f32.Vec3{-x * state.invf, 0, 0}))
 	}
 	if state.panRight {
-		p = append(p, glw.TranslateBy(f32.Vec4{+x * state.invf, 0, 0, 0}))
+		p = append(p, glw.TranslateBy(f32.Vec3{+x * state.invf, 0, 0}))
 	}
 	if state.panUp {
-		p = append(p, glw.TranslateBy(f32.Vec4{0, -x * state.invf, 0, 0}))
+		p = append(p, glw.TranslateBy(f32.Vec3{0, -x * state.invf, 0}))
 	}
 	if state.panDown {
-		p = append(p, glw.TranslateBy(f32.Vec4{0, +x * state.invf, 0, 0}))
+		p = append(p, glw.TranslateBy(f32.Vec3{0, +x * state.invf, 0}))
 	}
 	if state.rotateLeft {
 		p = append(p, glw.RotateBy(-x, f32.Vec3{0, 0, 1}))
@@ -406,10 +409,10 @@ func transforms() []func(glw.Transformer) {
 		p = append(p, glw.RotateBy(+x, f32.Vec3{0, 0, 1}))
 	}
 	if state.scaleUp {
-		p = append(p, glw.ScaleBy(f32.Vec4{1 + x, 1 + x, 1, 1}))
+		p = append(p, glw.ScaleBy(f32.Vec3{1 + x, 1 + x, 1}))
 	}
 	if state.scaleDown {
-		p = append(p, glw.ScaleBy(f32.Vec4{1 - x, 1 - x, 1, 1}))
+		p = append(p, glw.ScaleBy(f32.Vec3{1 - x, 1 - x, 1}))
 	}
 	return p
 }

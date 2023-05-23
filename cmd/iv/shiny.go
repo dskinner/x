@@ -37,7 +37,8 @@ type GLWidget struct {
 }
 
 func NewGLWidget(ctx gl.Context, draw func(), resize func(int, int), input func(interface{})) *GLWidget {
-	ctx = glw.With(ctx)
+	// TODO
+	// ctx = glw.With(ctx)
 	w := &GLWidget{draw: draw, resize: resize, input: input}
 	w.Wrapper = w
 	w.fbuf.Create()

@@ -96,6 +96,6 @@ func Fit(dst, src image.Point) glw.Transform {
 	} else {
 		x, y = nsrc, 1
 	}
-	tr.ScaleTo(f32.Vec4{x, y, 1, 1})
+	tr.ScaleTo(f32.Vec3{x, y, 1})
 	return tr
 }
