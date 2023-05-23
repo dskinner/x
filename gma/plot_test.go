@@ -1,15 +1,19 @@
-// +build plot
+//go:build plot
 
 package gma
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"math"
 	"os"
+	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"gonum.org/v1/plot"
 	"gonum.org/v1/plot/plotter"
@@ -39,7 +43,7 @@ type plttr struct {
 }
 
 func newplttr() *plttr {
-	p := plot.New()
+	p, _ := plot.New()
 	p.X.Min, p.X.Max = -5, 5
 	p.Y.Min, p.Y.Max = -5, 5
 	p.Add(plotter.NewGrid())
@@ -232,25 +236,50 @@ func saveImage(m image.Image, p string) {
 func TestJuliaFractal(t *testing.T) {
 	e1 := Multivector{{1, E1}}
 
-	const width, height = 400, 300
-	const zoom = 0.007
-
+	// const width, height = 200, 200
+	// const width, height = 400, 400
 	// const width, height = 800, 600
-	// const zoom = 0.0035
+	// const width, height = 1000, 1000
+	// const width, height = 1280, 720
+	const width, height = 2560, 1440
 
-	const maxiter = 60
+	const zoom = 0.0005
+	const maxiter = 90
+
+	bounds := image.Rect(-width/2, -height/2, width/2, height/2)
+	m := image.NewRGBA(bounds)
 
 	// c := Multivector{{-0.8, E1}, {0.156, E2}}
 	// c := Multivector{{-0.835, E1}, {-0.2321, E2}}
-	c := Multivector{{-0.70176, E1}, {-0.3842, E2}}
+	// c := Multivector{{-0.70176, E1}, {-0.3842, E2}}
+	c := Multivector{{-1.1, E1}, {-0.27, E2}}
 
-	r := image.Rect(-width/2, -height/2, width/2, height/2)
-	m := image.NewRGBA(r)
+	var (
+		wg       sync.WaitGroup
+		progress uint64
+	)
 
-	var wg sync.WaitGroup
+	go func() {
+		total := float64(bounds.Dx() * bounds.Dy())
+		epoch := time.Now()
+		for range time.Tick(1 * time.Second) {
+			complete := float64(atomic.LoadUint64(&progress)) / total
 
-	for y := r.Min.Y; y < r.Max.Y; y++ {
-		for x := r.Min.X; x < r.Max.X; x++ {
+			since := time.Since(epoch)
+			estimate := time.Duration(1 / complete * float64(since))
+			remaining := estimate - since
+
+			fmt.Printf("%.0f%% complete; time remaining %s\n", complete*100, remaining)
+
+			if complete == 1 {
+				fmt.Printf("completed in %s\n", since)
+				break
+			}
+		}
+	}()
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 
 			wg.Add(1)
 
@@ -263,26 +292,121 @@ func TestJuliaFractal(t *testing.T) {
 				}
 
 				for clr.G = 0; clr.G < maxiter; clr.G++ {
+					// if clr.G%3 == 0 {
+					// clr.B += 2
+					// }
+
 					p = p.Mul(e1).Mul(p).Add(c)
-					if p.NormSq() > 1e4 {
-						clr.R = clr.G * 2
+
+					if nsq := p.NormSq(); nsq > 1e6 {
+						if 1e8 < nsq && nsq < 1e12 {
+							cf := (1e12 / nsq) / 1e4
+							u8 := uint8(cf * 255)
+
+							clr.R = u8
+
+							// darken out background
+							clr.G = uint8((1e12 / nsq / 1e4) * 100)
+
+							// brighten edges up
+							// if nsq > 1e8 {
+							// clr.R += u8
+							// }
+
+							// shift edge color from red to orange
+							if nsq < 1e9 {
+								clr.B += u8
+							}
+						}
+
 						break
 					}
 				}
-				clr.G *= uint8(255 / maxiter)
-
-				// n := p.Norm()/10 + 0.5
-				// if n > 255 {
-				// n = 255
-				// }
-				// clr.B = uint8(n / 8)
 
 				m.Set(x, y, clr)
+				atomic.AddUint64(&progress, 1)
 				wg.Done()
 			}(x, y)
 		}
 	}
 
 	wg.Wait()
+
+	reduceNoise(m, 7)
 	saveImage(m, "julia.png")
+}
+
+// reduceNoise filters m by given window size with median filter; panics if size is less than 3 or even.
+// m will be inset by size/2.
+func reduceNoise(m *image.RGBA, size int) {
+	if size < 3 || size%2 == 0 {
+		panic("size must be >= 3 and odd")
+	}
+
+	var (
+		n  = size*size - 1
+		rs = make(Uint8Slice, 0, n)
+		gs = make(Uint8Slice, 0, n)
+		bs = make(Uint8Slice, 0, n)
+	)
+
+	apply := func(window *image.RGBA) {
+		bounds := window.Bounds()
+		if sz := bounds.Size(); sz.X != size || sz.Y != size {
+			return // edge detected
+		}
+		pt := bounds.Min.Add(bounds.Size().Div(2))
+
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				if pt.X == x && pt.Y == y {
+					continue
+				}
+				clr := m.At(x, y).(color.RGBA)
+				rs = append(rs, clr.R)
+				gs = append(gs, clr.B) // NOTE channel swap
+				bs = append(bs, clr.G)
+			}
+		}
+
+		window.Set(pt.X, pt.Y, color.RGBA{
+			R: rs.Median(),
+			G: gs.Median(),
+			B: bs.Median(),
+			A: 255,
+		})
+
+		rs, gs, bs = rs[:0], gs[:0], bs[:0]
+	}
+
+	bounds := m.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			apply(m.SubImage(image.Rect(x, y, x+size, y+size)).(*image.RGBA))
+		}
+	}
+
+	inset := m.SubImage(m.Bounds().Inset(size / 2)).(*image.RGBA)
+	*m = *inset
+}
+
+type Uint8Slice []uint8
+
+func (x Uint8Slice) Len() int           { return len(x) }
+func (x Uint8Slice) Less(i, j int) bool { return x[i] < x[j] }
+func (x Uint8Slice) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
+func (x Uint8Slice) Sort()              { sort.Sort(x) }
+
+// Median sorts the receiver and returns median of values.
+func (x Uint8Slice) Median() uint8 {
+	x.Sort()
+	n := len(x)
+	if n == 0 {
+		return 0
+	}
+	d := n / 2
+	if n%2 == 0 {
+		return (x[d] + x[d-1]) / 2
+	}
+	return x[d]
 }
