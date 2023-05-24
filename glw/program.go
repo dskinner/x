@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
 	"golang.org/x/image/math/f32"
+	"golang.org/x/mobile/gl"
 )
 
 // caller returns first file and line number outside of this package for calling
@@ -38,21 +38,12 @@ func caller(defaultName string) string {
 	return fmt.Sprintf("%s %s:%v", name, frame.File, frame.Line)
 }
 
-func compile(typ uint32, src string) (uint32, error) {
-	shd := gl.CreateShader(typ)
-	csrc, free := gl.Strs(src)
-	gl.ShaderSource(shd, 1, csrc, nil)
-	free()
-	gl.CompileShader(shd)
-
-	var status int32
-	gl.GetShaderiv(shd, gl.COMPILE_STATUS, &status)
-	if status == gl.FALSE {
-		var n int32
-		gl.GetShaderiv(shd, gl.INFO_LOG_LENGTH, &n)
-		msg := strings.Repeat("\x00", int(n+1))
-		gl.GetShaderInfoLog(shd, n, nil, gl.Str(msg))
-		return shd, fmt.Errorf("%s\n%s", caller("CompileShader"), msg)
+func compile(typ gl.Enum, src string) (gl.Shader, error) {
+	shd := ctx.CreateShader(typ)
+	ctx.ShaderSource(shd, src)
+	ctx.CompileShader(shd)
+	if ctx.GetShaderi(shd, gl.COMPILE_STATUS) == 0 {
+		return shd, fmt.Errorf("%s\n%s", caller("CompileShader"), ctx.GetShaderInfoLog(shd))
 	}
 	return shd, nil
 }
@@ -61,13 +52,13 @@ func compile(typ uint32, src string) (uint32, error) {
 type VertSrc string
 
 // Compile returns the compiled shader of src and error if any.
-func (src VertSrc) Compile() (uint32, error) { return compile(gl.VERTEX_SHADER, string(src)) }
+func (src VertSrc) Compile() (gl.Shader, error) { return compile(gl.VERTEX_SHADER, string(src)) }
 
 // FragSrc is fragment shader source code.
 type FragSrc string
 
 // Compile returns the compiled shader of src and error if any.
-func (src FragSrc) Compile() (uint32, error) { return compile(gl.FRAGMENT_SHADER, string(src)) }
+func (src FragSrc) Compile() (gl.Shader, error) { return compile(gl.FRAGMENT_SHADER, string(src)) }
 
 // VertAsset is a filename in assets containing vertex shader source code.
 type VertAsset string
@@ -82,23 +73,19 @@ type FragAsset string
 func (name FragAsset) Source() FragSrc { return FragSrc(MustReadAll(string(name))) }
 
 // Program identifies a compiled shader program. The bool Program.Init can be used to check if valid.
-type Program struct{ Program uint32 }
+type Program struct{ gl.Program }
 
 // Use installs program as part of current rendering state.
-func (prg Program) Use() { gl.UseProgram(prg.Program) }
+func (prg Program) Use() { ctx.UseProgram(prg.Program) }
 
 // Uniform returns uniform location by name in program.
-func (prg Program) Uniform(name string) UniformLocation {
-	return UniformLocation{Value:gl.GetUniformLocation(prg.Program, gl.Str(name + "\x00"))}
-}
+func (prg Program) Uniform(name string) gl.Uniform { return ctx.GetUniformLocation(prg.Program, name) }
 
 // Attrib returns attribute location by name in program.
-func (prg Program) Attrib(name string) AttribLocation {
-	return AttribLocation{Value:uint32(gl.GetAttribLocation(prg.Program, gl.Str(name + "\x00")))}
-}
+func (prg Program) Attrib(name string) gl.Attrib { return ctx.GetAttribLocation(prg.Program, name) }
 
 // Delete frees the memory and invalidates the name associated with the program.
-func (prg Program) Delete() { gl.DeleteProgram(prg.Program) }
+func (prg Program) Delete() { ctx.DeleteProgram(prg.Program) }
 
 // MustBuild is a helper that wraps Program.Build and panics on error.
 func (prg *Program) MustBuild(vsrc VertSrc, fsrc FragSrc) { must(prg.Build(vsrc, fsrc)) }
@@ -115,33 +102,25 @@ func (prg *Program) BuildAssets(vtag VertAsset, ftag FragAsset) error {
 
 // Build compiles shaders and links program.
 func (prg *Program) Build(vsrc VertSrc, fsrc FragSrc) error {
-	prg.Program = gl.CreateProgram()
+	prg.Program = ctx.CreateProgram()
 
 	vshd, err := vsrc.Compile()
 	if err != nil {
 		return err
 	}
-	gl.AttachShader(prg.Program, vshd)
-	defer gl.DeleteShader(vshd)
+	ctx.AttachShader(prg.Program, vshd)
+	defer ctx.DeleteShader(vshd)
 
 	fshd, err := fsrc.Compile()
 	if err != nil {
 		return err
 	}
-	gl.AttachShader(prg.Program, fshd)
-	defer gl.DeleteShader(fshd)
+	ctx.AttachShader(prg.Program, fshd)
+	defer ctx.DeleteShader(fshd)
 
-	gl.LinkProgram(prg.Program)
-
-	var status int32
-	gl.GetProgramiv(prg.Program, gl.LINK_STATUS, &status)
-	if status == gl.FALSE {
-		var n int32
-		gl.GetProgramiv(prg.Program, gl.INFO_LOG_LENGTH, &n)
-
-		msg := strings.Repeat("\x00", int(n+1))
-		gl.GetProgramInfoLog(prg.Program, n, nil, gl.Str(msg))
-		return fmt.Errorf("%s\n%s", caller("LinkProgram"), msg)
+	ctx.LinkProgram(prg.Program)
+	if ctx.GetProgrami(prg.Program, gl.LINK_STATUS) == 0 {
+		return fmt.Errorf("%s\n%s", caller("LinkProgram"), ctx.GetProgramInfoLog(prg.Program))
 	}
 
 	return nil
@@ -171,7 +150,7 @@ func (prg Program) Unmarshal(dst interface{}) {
 			p[0] = unicode.ToLower(p[0])
 			name := string(p)
 			switch f.Interface().(type) {
-			case AttribLocation:
+			case gl.Attrib:
 				f.Set(reflect.ValueOf(prg.Attrib(name)))
 			case VertexArray:
 				f.Field(0).Set(reflect.ValueOf(prg.Attrib(name)))
@@ -185,7 +164,7 @@ func (prg Program) Unmarshal(dst interface{}) {
 				f.Set(reflect.ValueOf(A3fv(prg.Attrib(name))))
 			case A4fv:
 				f.Set(reflect.ValueOf(A4fv(prg.Attrib(name))))
-			case UniformLocation:
+			case gl.Uniform:
 				f.Set(reflect.ValueOf(prg.Uniform(name)))
 			case U1i:
 				f.Set(reflect.ValueOf(U1i(prg.Uniform(name))))
