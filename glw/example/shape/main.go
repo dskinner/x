@@ -30,19 +30,54 @@ void main() {
 	gl_FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
 }`
 
-type Triangle struct {
-	prg glw.Program
+type Shape interface {
+	Create()
+	Draw(time.Time)
+	Delete()
+}
 
-	Proj  glw.U16fv
+type Env struct {
+	prg  glw.Program
+	Proj glw.U16fv
+
+	shapes []Shape
+	index  int
+}
+
+func (env *Env) Create() {
+	env.prg.MustBuild(vsrc, fsrc)
+	env.prg.Unmarshal(env)
+	env.prg.Use()
+	for _, shape := range env.shapes {
+		env.prg.Unmarshal(shape)
+		shape.Create()
+	}
+}
+
+func (env *Env) Layout(ev size.Event) {
+	if ev.HeightPx != 0 {
+		ar := float32(ev.WidthPx) / float32(ev.HeightPx)
+		env.Proj.Ortho(-ar, ar, -1, 1, 0.1, 10.0)
+	}
+}
+
+func (env *Env) Draw(now time.Time) {
+	env.shapes[env.index].Draw(now)
+}
+
+func (env *Env) Delete() {
+	for _, shape := range env.shapes {
+		shape.Delete()
+	}
+	env.prg.Delete()
+}
+
+type Triangle struct {
 	Model glw.U16fv
 	Vert  glw.VertexArray
 }
 
 func (tri *Triangle) Create() {
-	tri.prg.MustBuild(vsrc, fsrc)
-	tri.prg.Unmarshal(tri)
-	tri.prg.Use()
-
 	tri.Vert.Floats.Create(gl.STATIC_DRAW, []float32{
 		-0.5, -0.5,
 		+0.5, -0.5,
@@ -52,13 +87,6 @@ func (tri *Triangle) Create() {
 	tri.Vert.Bind()
 
 	tri.Model.Animator(glw.Duration(1 * time.Second))
-}
-
-func (tri *Triangle) Layout(ev size.Event) {
-	if ev.HeightPx != 0 {
-		ar := float32(ev.WidthPx) / float32(ev.HeightPx)
-		tri.Proj.Ortho(-ar, ar, -1, 1, 0.1, 10.0)
-	}
 }
 
 func (tri *Triangle) Draw(now time.Time) {
@@ -72,22 +100,14 @@ func (tri *Triangle) Draw(now time.Time) {
 
 func (tri *Triangle) Delete() {
 	tri.Vert.Delete()
-	tri.prg.Delete()
 }
 
 type Square struct {
-	prg glw.Program
-
-	Proj  glw.U16fv
 	Model glw.U16fv
 	Vert  glw.VertexElement
 }
 
 func (sqr *Square) Create() {
-	sqr.prg.MustBuild(vsrc, fsrc)
-	sqr.prg.Unmarshal(sqr)
-	sqr.prg.Use()
-
 	sqr.Vert.Floats.Create(gl.STATIC_DRAW, []float32{
 		-0.5, -0.5,
 		+0.5, -0.5,
@@ -99,10 +119,6 @@ func (sqr *Square) Create() {
 	sqr.Vert.Bind()
 }
 
-func (sqr *Square) Layout(ev size.Event) {
-	// proj uniform already set
-}
-
 func (sqr *Square) Draw(now time.Time) {
 	sqr.Model.Step(now)
 	sqr.Model.Update()
@@ -112,22 +128,12 @@ func (sqr *Square) Draw(now time.Time) {
 
 func (sqr *Square) Delete() {
 	sqr.Vert.Delete()
-	sqr.prg.Delete()
-}
-
-type Shape interface {
-	Create()
-	Layout(size.Event)
-	Draw(time.Time)
-	Delete()
 }
 
 func main() {
 	app.Main(func(a app.App) {
 		var glctx gl.Context
-
-		shapes := []Shape{new(Triangle), new(Square)}
-		index := 0
+		env := &Env{shapes: []Shape{new(Triangle), new(Square)}}
 
 		gef := gesture.EventFilter{}
 		gef.Send = func(e interface{}) {
@@ -137,7 +143,7 @@ func main() {
 			switch e := e.(type) {
 			case gesture.DoubleTouch:
 				if e[len(e)-1].Final() {
-					index = (index + 1) % len(shapes)
+					env.index = (env.index + 1) % len(env.shapes)
 				}
 			}
 		}
@@ -148,29 +154,23 @@ func main() {
 				switch ev.Crosses(lifecycle.StageVisible) {
 				case lifecycle.CrossOn:
 					glctx = glw.With(ev.DrawContext.(gl.Context))
-					for _, shape := range shapes {
-						shape.Create()
-					}
+					env.Create()
 				case lifecycle.CrossOff:
-					for _, shape := range shapes {
-						shape.Delete()
-					}
+					env.Delete()
 					glctx = glw.With(nil)
 				}
 			case size.Event:
 				if glctx == nil {
 					a.Send(ev)
 				} else {
-					for _, shape := range shapes {
-						shape.Layout(ev)
-					}
+					env.Layout(ev)
 					glctx.Viewport(0, 0, ev.WidthPx, ev.HeightPx)
 				}
 			case paint.Event:
 				if glctx != nil {
 					now := time.Now()
 					glctx.Clear(gl.COLOR_BUFFER_BIT)
-					shapes[index].Draw(now)
+					env.Draw(now)
 					a.Publish()
 					a.Send(paint.Event{})
 				}
