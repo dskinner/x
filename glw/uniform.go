@@ -187,12 +187,16 @@ func (u *U16fv) Ortho(l, r float32, b, t float32, n, f float32) {
 }
 
 // TODO Animator2
-func (u *U16fv) RotateBy(angle float32, axis f32.Vec3) { u.animator.to.RotateBy(angle, axis) }
-func (u *U16fv) RotateTo(angle float32, axis f32.Vec3) { u.animator.to.RotateTo(angle, axis) }
+func (u *U16fv) RotateBy(angle float32, axis f32.Vec3) {
+	u.animator.to.RotateBy(angle, axis)
+	u.animator.at = u.animator.to
+	u.animator.pt = u.animator.to
+}
+
 func (u *U16fv) RotateAt(angle float32, axis f32.Vec3) {
 	u.animator.at.RotateTo(angle, axis)
-	u.animator.pt.RotateTo(angle, axis)
-	u.animator.to.RotateTo(angle, axis)
+	u.animator.pt = u.animator.at
+	u.animator.to = u.animator.at
 }
 
 func (u U16fv) String() string {

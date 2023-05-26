@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"time"
 
 	"dasa.cc/x/glw"
@@ -44,7 +45,7 @@ type Env struct {
 	index  int
 }
 
-func (env *Env) Create() {
+func (env *Env) Create(ctx gl.Context) {
 	env.prg.MustBuild(vsrc, fsrc)
 	env.prg.Unmarshal(env)
 	env.prg.Use()
@@ -52,6 +53,8 @@ func (env *Env) Create() {
 		env.prg.Unmarshal(shape)
 		shape.Create()
 	}
+
+	ctx.LineWidth(4)
 }
 
 func (env *Env) Layout(ev size.Event) {
@@ -120,7 +123,7 @@ func (sqr *Square) Create() {
 }
 
 func (sqr *Square) Draw(now time.Time) {
-	sqr.Model.Step(now)
+	sqr.Model.RotateBy(0.01, f32.Vec3{0, 0, 1})
 	sqr.Model.Update()
 	sqr.Vert.Bind()
 	sqr.Vert.Draw(gl.TRIANGLES)
@@ -130,10 +133,49 @@ func (sqr *Square) Delete() {
 	sqr.Vert.Delete()
 }
 
+type Pentagon struct {
+	Model glw.U16fv
+	Vert  glw.VertexElement
+}
+
+func (pnt *Pentagon) Create() {
+	const (
+		r = math.Pi / 180
+		m = 0.5
+	)
+	rot := func(angle float64) (float32, float32) {
+		c, s := math.Cos(r*angle), math.Sin(r*angle)
+		return float32(m * c), float32(m * s)
+	}
+
+	x1, y1 := rot(90 - 72)
+	x2, y2 := rot(18 - 72)
+	pnt.Vert.Floats.Create(gl.STATIC_DRAW, []float32{
+		0, m,
+		x1, y1,
+		x2, y2,
+		-x2, y2,
+		-x1, y1,
+	})
+	pnt.Vert.Uints.Create(gl.STATIC_DRAW, []uint32{0, 1, 1, 2, 2, 3, 3, 4, 4, 0})
+	pnt.Vert.StepSize(2, 0, 0)
+	pnt.Vert.Bind()
+}
+
+func (pnt *Pentagon) Draw(now time.Time) {
+	pnt.Model.Update()
+	pnt.Vert.Bind()
+	pnt.Vert.Draw(gl.LINES)
+}
+
+func (pnt *Pentagon) Delete() {
+	pnt.Vert.Delete()
+}
+
 func main() {
 	app.Main(func(a app.App) {
 		var glctx gl.Context
-		env := &Env{shapes: []Shape{new(Triangle), new(Square)}}
+		env := &Env{shapes: []Shape{new(Triangle), new(Square), new(Pentagon)}}
 
 		gef := gesture.EventFilter{}
 		gef.Send = func(e interface{}) {
@@ -142,7 +184,7 @@ func main() {
 			}
 			switch e := e.(type) {
 			case gesture.DoubleTouch:
-				if e[len(e)-1].Final() {
+				if e.Final() {
 					env.index = (env.index + 1) % len(env.shapes)
 				}
 			}
@@ -154,7 +196,7 @@ func main() {
 				switch ev.Crosses(lifecycle.StageVisible) {
 				case lifecycle.CrossOn:
 					glctx = glw.With(ev.DrawContext.(gl.Context))
-					env.Create()
+					env.Create(glctx)
 				case lifecycle.CrossOff:
 					env.Delete()
 					glctx = glw.With(nil)

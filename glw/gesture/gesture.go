@@ -94,20 +94,11 @@ func (e Event) GoString() string {
 	return fmt.Sprintf("%T{X:%2v Y:%2v Type:%-5v Time:%s}", e, e.X, e.Y, e.Type, e.Time.Format("15:04:05.000"))
 }
 
-type Events []Event
-
-func (es Events) Last() Event {
-	if len(es) == 0 {
-		return ZE
-	}
-	return es[len(es)-1]
-}
-
 type handler interface {
 	handle(Event) handler
-	final() bool
-	last() Event
 	condense() handler
+	Final() bool
+	Last() Event
 }
 
 var (
@@ -128,8 +119,6 @@ var (
 // TODO endless events is nice for history, but no more than ?three? events are ever actually needed.
 type Touch []Event
 
-func (a Touch) final() bool { return len(a) != 0 && a[len(a)-1].Type.Has(TypeFinal) }
-func (a Touch) last() Event { return a.Last() }
 func (a Touch) condense() handler {
 	if len(a) <= 3 {
 		return a
@@ -137,6 +126,7 @@ func (a Touch) condense() handler {
 	return Touch{a[0], a[len(a)-2], a[len(a)-1]}
 }
 
+func (a Touch) Final() bool { return len(a) != 0 && a[len(a)-1].Type.Has(TypeFinal) }
 func (a Touch) Last() Event {
 	if len(a) == 0 {
 		return ZE
@@ -185,8 +175,8 @@ func (a Touch) handle(e Event) handler {
 
 type Drag []Event
 
-func (a Drag) final() bool { return len(a) != 0 && a[len(a)-1].Type.Has(TypeFinal) }
-func (a Drag) last() Event { return Touch(a).Last() }
+func (a Drag) Final() bool { return Touch(a).Final() }
+func (a Drag) Last() Event { return Touch(a).Last() }
 func (a Drag) condense() handler {
 	if len(a) <= 3 {
 		return a
@@ -215,8 +205,8 @@ func (a Drag) GoString() string {
 
 type LongPress []Event
 
-func (a LongPress) final() bool { return len(a) != 0 && a[len(a)-1].Type.Has(TypeFinal) }
-func (a LongPress) last() Event { return Touch(a).Last() }
+func (a LongPress) Final() bool { return Touch(a).Final() }
+func (a LongPress) Last() Event { return Touch(a).Last() }
 func (a LongPress) condense() handler {
 	if len(a) <= 3 {
 		return a
@@ -242,8 +232,8 @@ func (a LongPress) handle(e Event) handler {
 
 type LongPressDrag []Event
 
-func (a LongPressDrag) final() bool { return len(a) != 0 && a[len(a)-1].Type.Has(TypeFinal) }
-func (a LongPressDrag) last() Event { return Touch(a).Last() }
+func (a LongPressDrag) Final() bool { return Touch(a).Final() }
+func (a LongPressDrag) Last() Event { return Touch(a).Last() }
 func (a LongPressDrag) condense() handler {
 	if len(a) <= 3 {
 		return a
@@ -273,8 +263,8 @@ func (a LongPressDrag) GoString() string {
 
 type DoubleTouch []Event
 
-func (a DoubleTouch) final() bool { return len(a) != 0 && a[len(a)-1].Type.Has(TypeFinal) }
-func (a DoubleTouch) last() Event { return Touch(a).Last() }
+func (a DoubleTouch) Final() bool { return Touch(a).Final() }
+func (a DoubleTouch) Last() Event { return Touch(a).Last() }
 func (a DoubleTouch) condense() handler {
 	if len(a) <= 3 {
 		return a
@@ -314,8 +304,8 @@ func (a DoubleTouch) handle(e Event) handler {
 
 type DoubleTouchDrag []Event
 
-func (a DoubleTouchDrag) final() bool { return len(a) != 0 && a[len(a)-1].Type.Has(TypeFinal) }
-func (a DoubleTouchDrag) last() Event { return Touch(a).Last() }
+func (a DoubleTouchDrag) Final() bool { return Touch(a).Final() }
+func (a DoubleTouchDrag) Last() Event { return Touch(a).Last() }
 func (a DoubleTouchDrag) condense() handler {
 	if len(a) <= 3 {
 		return a
@@ -405,7 +395,7 @@ func (f *EventFilter) Filter(e interface{}) interface{} {
 		return e // gesture was cancelled
 	}
 
-	if f.tracking.final() {
+	if f.tracking.Final() {
 		f.Send(f.tracking.condense())
 		f.tracking = nil
 		return e
@@ -416,7 +406,7 @@ func (f *EventFilter) Filter(e interface{}) interface{} {
 		sendAfter(f.Send, doubleTouchMin, touchTimeout{t})
 	}
 
-	if last := f.tracking.last(); last != f.last {
+	if last := f.tracking.Last(); last != f.last {
 		f.Send(f.tracking.condense())
 		f.last = last
 	}
