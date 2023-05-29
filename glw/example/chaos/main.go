@@ -154,7 +154,7 @@ func main() {
 			case lifecycle.Event:
 				switch ev.Crosses(lifecycle.StageVisible) {
 				case lifecycle.CrossOn:
-					glctx = glw.With(ev.DrawContext.(gl.Context))
+					glctx = glw.With(ev.DrawContext.(gl.Context3))
 					chs.Create(glctx)
 				case lifecycle.CrossOff:
 					chs.Delete()

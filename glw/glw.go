@@ -16,13 +16,13 @@ import (
 )
 
 var (
-	ctx    gl.Context
+	ctx    gl.Context3
 	logger = log.New(os.Stderr, "glw: ", 0)
 
 	Assets embed.FS
 )
 
-func With(glctx gl.Context) gl.Context { ctx = glctx; return glctx }
+func With(glctx gl.Context3) gl.Context3 { ctx = glctx; return glctx }
 
 func Context() gl.Context { return ctx }
 
@@ -218,12 +218,11 @@ type FrameBuffer struct {
 	maxw, maxh int
 }
 
-// TODO
-// func (buf *FrameBuffer) Create(options ...func(*Texture)) {
-// 	gl.CreateFramebuffers(1, &buf.Framebuffer)
-// 	buf.tex.Create(options...)
-// 	buf.rgba = &image.RGBA{}
-// }
+func (buf *FrameBuffer) Create(options ...func(*Texture)) {
+	buf.Framebuffer = ctx.CreateFramebuffer()
+	buf.tex.Create(options...)
+	buf.rgba = &image.RGBA{}
+}
 
 func (buf *FrameBuffer) Delete() {
 	buf.Framebuffer = ctx.CreateFramebuffer()
@@ -234,6 +233,13 @@ func (buf *FrameBuffer) Attach() {
 	ctx.BindFramebuffer(gl.FRAMEBUFFER, buf.Framebuffer)
 	buf.tex.Bind()
 	ctx.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, buf.tex.Texture, 0)
+}
+
+// Blit to default framebuffer
+func (buf *FrameBuffer) Blit(sz image.Point) {
+	ctx.BindFramebuffer(gl.DRAW_FRAMEBUFFER, gl.Framebuffer{Value: 0})
+	ctx.Viewport(0, 0, sz.X, sz.Y)
+	ctx.BlitFramebuffer(0, 0, sz.X, sz.Y, 0, 0, sz.X, sz.Y, gl.COLOR_BUFFER_BIT, gl.NEAREST)
 }
 
 func (buf *FrameBuffer) Update(width, height int) {

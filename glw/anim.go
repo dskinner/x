@@ -79,12 +79,10 @@ func (a *Transform) ScaleBy(v f32.Vec3) { a.Scale = mul3fv(a.Scale, v) }
 func (a *Transform) ScaleTo(v f32.Vec3) { a.Scale = v }
 
 func (a *Transform) RotateBy(angle float32, axis f32.Vec3) {
-	// a.Rotate = norm4fv(QuatMul(a.Rotate, Quat(angle, axis)))
 	a.Rotate = QuatMul(a.Rotate, Quat(angle, axis))
 }
 
 func (a *Transform) RotateTo(angle float32, axis f32.Vec3) {
-	// a.Rotate = norm4fv(Quat(angle, axis))
 	a.Rotate = Quat(angle, axis)
 }
 
@@ -93,8 +91,7 @@ func (a Transform) Lerp(b Transform, t float32) Transform {
 		Translate: lerp3fv(a.Translate, b.Translate, t),
 		Shear:     lerp3fv(a.Shear, b.Shear, t),
 		Scale:     lerp3fv(a.Scale, b.Scale, t),
-		// Rotate:    norm4fv(lerp4fv(a.Rotate, b.Rotate, t)),
-		Rotate: lerp4fv(a.Rotate, b.Rotate, t),
+		Rotate:    lerp4fv(a.Rotate, b.Rotate, t),
 	}
 }
 
@@ -143,15 +140,15 @@ func Duration(d time.Duration) func(*Animator) { return func(a *Animator) { a.Du
 
 func Interp(fn func(float64) float64) func(*Animator) { return func(a *Animator) { a.Interp(fn) } }
 
-// TODO epochs for each transform type (translate, rotate, etc) so each operates independently
-
 var DefaultAnimatorDuration = 1000 * time.Millisecond
 
 type Animator struct {
 	// animations lerp (at) -> (to) for dur, storing result in pt
 	at, pt, to Transform
 
-	epoch  time.Time
+	// TODO epochs for each transform type (translate, rotate, etc) so each operates independently
+	epoch time.Time
+
 	dur    time.Duration
 	interp func(float64) float64
 }
@@ -203,7 +200,7 @@ func (a *Animator) RotateTo(angle float32, axis f32.Vec3) { a.to.RotateTo(angle,
 // which suggests a different kind of layout
 func (a *Animator) Stage(epoch time.Time, transforms ...func(Transformer)) {
 	a.Cancel()
-	a.Epoch(epoch)
+	a.epoch = epoch
 	for _, tr := range transforms {
 		tr(a)
 	}
@@ -216,14 +213,14 @@ func (a *Animator) Stage(epoch time.Time, transforms ...func(Transformer)) {
 //
 // TODO its like Cancel but for starting a new animation which is confusing
 // if actually desirable just make Cancel call Epoch(time.Time{}) ???
-func (a *Animator) Epoch(now time.Time) {
-	if now == a.epoch {
-		return
-	}
-	a.epoch = now
-	// a.at = a.pt
-	// a.to = a.pt
-}
+// func (a *Animator) Epoch(now time.Time) {
+// 	if now == a.epoch {
+// 		return
+// 	}
+// 	a.epoch = now
+// 	// a.at = a.pt
+// 	// a.to = a.pt
+// }
 
 func (a *Animator) Step(now time.Time) (ok bool) {
 	if a.epoch == (time.Time{}) {

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"image"
+	"image/png"
+	"os"
 	"time"
 
 	"dasa.cc/x/glw"
@@ -32,6 +35,15 @@ void main() {
 	gl_FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
 }`
 
+func export(path string, img *image.RGBA) {
+	out, err := os.Create(path)
+	defer out.Close()
+	if err != nil {
+		fmt.Printf("Failed to create %s: %v\n", path, err)
+	}
+	png.Encode(out, img.SubImage(img.Rect))
+}
+
 type Shape interface {
 	Create()
 	Draw(time.Time)
@@ -40,8 +52,9 @@ type Shape interface {
 }
 
 var env = &Env{
-	shapes: []Shape{new(Triangle), new(Square), new(Pentagon)},
-	index:  1,
+	shapes:         []Shape{new(Triangle), new(Square), new(Pentagon)},
+	index:          1,
+	useFrameBuffer: true,
 }
 
 type Env struct {
@@ -49,13 +62,21 @@ type Env struct {
 	Proj glw.U16fv
 	Rect image.Rectangle
 
+	useFrameBuffer bool
+	buf            glw.FrameBuffer
+
 	shapes []Shape
 	index  int
 
 	ge any
 }
 
-func (env *Env) Create(ctx gl.Context) {
+func (env *Env) Create(ctx gl.Context3) {
+	if env.useFrameBuffer {
+		env.buf.Create()
+		env.buf.Attach()
+	}
+
 	env.MustBuild(vsrc, fsrc)
 	env.Unmarshal(env)
 	env.Use()
@@ -68,20 +89,31 @@ func (env *Env) Create(ctx gl.Context) {
 	ctx.LineWidth(4)
 }
 
-func (env *Env) Layout(ctx gl.Context, ev size.Event) {
+func (env *Env) Layout(ctx gl.Context3, ev size.Event) {
 	if ev.HeightPx != 0 {
 		ar := float32(ev.WidthPx) / float32(ev.HeightPx)
 		env.Proj.Ortho(-ar, ar, -1, 1, 0.1, 10.0)
+		if env.useFrameBuffer {
+			env.buf.Attach()
+			env.buf.Update(ev.WidthPx, ev.HeightPx)
+		}
 		ctx.Viewport(0, 0, ev.WidthPx, ev.HeightPx)
 		env.Rect = ev.Bounds()
 	}
 }
 
-func (env *Env) Draw(ctx gl.Context) {
+func (env *Env) Draw(ctx gl.Context3) {
 	now := time.Now()
+	if env.useFrameBuffer {
+		env.buf.Attach()
+	}
 	ctx.Clear(gl.COLOR_BUFFER_BIT)
 	env.Use()
 	env.shapes[env.index].Draw(now)
+
+	if env.useFrameBuffer {
+		env.buf.Blit(env.Rect.Size())
+	}
 
 	var ge any
 	env.ge, ge = nil, env.ge
@@ -94,6 +126,10 @@ func (env *Env) Delete() {
 	for _, shape := range env.shapes {
 		shape.Delete()
 	}
+	if env.useFrameBuffer {
+		env.buf.Detach()
+		env.buf.Delete()
+	}
 	env.Program.Delete()
 }
 
@@ -101,6 +137,7 @@ func (env *Env) Gesture(e any) {
 	switch e := e.(type) {
 	case gesture.DoubleTouch:
 		if e.Final() {
+			// export("export.png", env.buf.RGBA())
 			env.index = (env.index + 1) % len(env.shapes)
 		}
 	default:
@@ -164,7 +201,7 @@ func (sqr *Square) Create() {
 
 func (sqr *Square) Draw(now time.Time) {
 	if !sqr.Model.Step(now) {
-		// sqr.Model.Transform(glw.RotateBy(90, f32.Vec3{0, 0, 1}))
+		sqr.Model.Stage(now, glw.RotateBy(90, f32.Vec3{0, 0, 1}))
 	}
 	sqr.Model.Update()
 	sqr.Vert.Bind()
@@ -228,7 +265,7 @@ func (pnt *Pentagon) Gesture(e any) {}
 
 func main() {
 	app.Main(func(a app.App) {
-		var glctx gl.Context
+		var glctx gl.Context3
 		gef := gesture.EventFilter{Send: a.Send}
 
 		for e := range a.Events() {
@@ -239,7 +276,7 @@ func main() {
 			case lifecycle.Event:
 				switch e.Crosses(lifecycle.StageVisible) {
 				case lifecycle.CrossOn:
-					glctx = glw.With(e.DrawContext.(gl.Context))
+					glctx = glw.With(e.DrawContext.(gl.Context3))
 					env.Create(glctx)
 				case lifecycle.CrossOff:
 					env.Delete()
