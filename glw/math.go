@@ -9,9 +9,11 @@ import (
 
 // https://www.youtube.com/watch?v=PNlgMPzj-7Q&list=PLpzmRsG7u_gqaTo_vEseQ7U8KFvtiJY4K&index=1
 
-type Vec2 f32.Vec2
-type Vec3 f32.Vec3
-type Vec4 f32.Vec4
+// type (
+// 	Vec2 f32.Vec2
+// 	Vec3 f32.Vec3
+// 	Vec4 f32.Vec4
+// )
 
 // z4fv is zero value of Vec4.
 var z4fv f32.Vec4
@@ -23,7 +25,8 @@ func Uton(u float32) float32 { return 2*u - 1 }
 func Ntou(n float32) float32 { return (n + 1) / 2 }
 
 func Quat(angle float32, axis f32.Vec3) f32.Vec4 {
-	c, s := float32(math.Cos(float64(angle/2))), float32(math.Sin(float64(angle/2)))
+	const rads = math.Pi / 180
+	c, s := float32(math.Cos(float64(angle*rads)/2)), float32(math.Sin(float64(angle*rads)/2))
 	return f32.Vec4{c, axis[0] * s, axis[1] * s, axis[2] * s}
 }
 
@@ -164,12 +167,12 @@ func len4fv(a f32.Vec4) float32 {
 
 func norm3fv(a f32.Vec3) f32.Vec3 {
 	l := 1.0 / len3fv(a)
-	return f32.Vec3{a[0]*l, a[1]*l, a[2]*l}
+	return f32.Vec3{a[0] * l, a[1] * l, a[2] * l}
 }
 
 func norm4fv(a f32.Vec4) f32.Vec4 {
 	l := 1.0 / len4fv(a)
-	return f32.Vec4{a[0]*l, a[1]*l, a[2]*l, a[3]*l}
+	return f32.Vec4{a[0] * l, a[1] * l, a[2] * l, a[3] * l}
 }
 
 func lerp3fv(a, b f32.Vec3, t float32) f32.Vec3 {

@@ -9,7 +9,10 @@ import (
 
 type Uniform interface {
 	// Animator allows setting additional options.
-	Animator(options ...func(Animator)) Animator
+	Animator(options ...func(*Animator)) *Animator
+
+	// Transform applies given transforms instantly.
+	Transform(transforms ...func(Transformer))
 
 	// Stage transforms to occur the next time Step is called.
 	// Previously staged transforms or animations in progress
@@ -21,50 +24,34 @@ type Uniform interface {
 	// work to animate to final destination; subsequent calls
 	// do not perform any work.
 	Step(now time.Time) (ok bool)
-
-	// Transform immediately starts an animation in a separate
-	// goroutine, cancelling any staged transforms or animations
-	// currently in progress.
-	Transform(transforms ...func(Transformer))
 }
 
 type uniform struct {
 	gl.Uniform
-	animator  *animator
-	animating uint32
-	update    func()
+	animator *Animator
 }
 
-func newuniform(a gl.Uniform, update func()) *uniform {
-	u := &uniform{Uniform: a, animator: newanimator(), update: update}
-	u.animator.Apply(Notify(&u.animating))
-	return u
+func newuniform(a gl.Uniform) *uniform {
+	return &uniform{Uniform: a, animator: NewAnimator()}
 }
 
-func (u *uniform) At() Transform { return u.animator.At() }
-
-func (u *uniform) Animator(options ...func(Animator)) Animator {
+func (u *uniform) Animator(options ...func(*Animator)) *Animator {
 	u.animator.Apply(options...)
 	return u.animator
+}
+
+func (u *uniform) Transform(transforms ...func(Transformer)) {
+	for _, tr := range transforms {
+		tr(u.animator)
+	}
+	u.animator.Done()
 }
 
 func (u *uniform) Stage(epoch time.Time, transforms ...func(Transformer)) {
 	u.animator.Stage(epoch, transforms...)
 }
 
-func (u *uniform) Step(now time.Time) (ok bool) {
-	if ok = u.animating != 0; ok {
-		if ok = u.animator.Step(now); !ok {
-			u.animator.Cancel()
-		}
-		u.update()
-	}
-	return ok
-}
-
-func (u *uniform) Transform(transforms ...func(Transformer)) {
-	u.animator.Start(transforms...)
-}
+func (u *uniform) Step(now time.Time) (ok bool) { return u.animator.Step(now) }
 
 type U1i gl.Uniform
 
@@ -84,7 +71,8 @@ func (u U4i) Set(v0, v1, v2, v3 int32) { ctx.Uniform4i(gl.Uniform(u), v0, v1, v2
 
 type U1f struct{ *uniform }
 
-func (u *U1f) Update() { ctx.Uniform1f(u.Uniform, u.animator.pt.eval1f()) }
+// TODO
+// func (u *U1f) Update() { ctx.Uniform1f(u.Uniform, u.animator.pt.eval1f()) }
 
 type U2fv struct {
 	gl.Uniform
@@ -109,13 +97,14 @@ type U4fv struct {
 	animating uint32
 
 	v f32.Vec4
-	a *animator
+	// a *animator
 }
 
 func (u U4fv) Update() {
-	if u.a != nil {
-		u.v = u.a.pt.eval4fv()
-	}
+	// if u.a != nil {
+	// panic("not implemented")
+	// u.v = u.a.pt.eval4fv()
+	// }
 	ctx.Uniform4fv(u.Uniform, u.v[:])
 }
 
@@ -127,29 +116,33 @@ func (u U4fv) Update() {
 // 	gl.Uniform4fv(u.Value, 1, &u.v[0])
 // }
 
-func (u *U4fv) Animator(options ...func(Animator)) Animator {
-	if u.a == nil {
-		u.a = newanimator(Notify(&u.animating))
-	}
-	u.a.Apply(options...)
-	return u.a
+func (u *U4fv) Animator(options ...func(*Animator)) *Animator {
+	panic("TODO")
+	// if u.a == nil {
+	// 	u.a = newanimator(Notify(&u.animating))
+	// }
+	// u.a.Apply(options...)
+	// return u.a
 }
 
-func (u *U4fv) Transform(transforms ...func(Transformer)) { u.Animator().Start(transforms...) }
+func (u *U4fv) Transform(transforms ...func(Transformer)) {
+	panic("TODO")
+	// u.Animator().Start(transforms...)
+}
 
 func (u *U4fv) Stage(epoch time.Time, transforms ...func(Transformer)) {
-	u.a.Stage(epoch, transforms...)
+	// u.a.Stage(epoch, transforms...)
 }
 
-func (u *U4fv) Step(now time.Time) (ok bool) {
-	if ok = u.animating != 0; ok {
-		if ok = u.a.Step(now); !ok {
-			u.a.Cancel()
-		}
-		u.Update()
-	}
-	return ok
-}
+// func (u *U4fv) Step(now time.Time) (ok bool) {
+// 	if ok = u.animating != 0; ok {
+// 		if ok = u.a.Step(now); !ok {
+// 			u.a.Cancel()
+// 		}
+// 		u.Update()
+// 	}
+// 	return ok
+// }
 
 type U9fv gl.Uniform
 
@@ -184,19 +177,6 @@ func (u *U16fv) Ortho(l, r float32, b, t float32, n, f float32) {
 	u.animator.at = u.animator.to
 	u.animator.pt = u.animator.to
 	u.Update()
-}
-
-// TODO Animator2
-func (u *U16fv) RotateBy(angle float32, axis f32.Vec3) {
-	u.animator.to.RotateBy(angle, axis)
-	u.animator.at = u.animator.to
-	u.animator.pt = u.animator.to
-}
-
-func (u *U16fv) RotateAt(angle float32, axis f32.Vec3) {
-	u.animator.at.RotateTo(angle, axis)
-	u.animator.pt = u.animator.at
-	u.animator.to = u.animator.at
 }
 
 func (u U16fv) String() string {

@@ -350,7 +350,7 @@ type EventFilter struct {
 	last     Event
 }
 
-func (f *EventFilter) Filter(e interface{}) interface{} {
+func (f *EventFilter) Filter(e any) any {
 	var t Event
 	switch e := e.(type) {
 	case mouse.Event:

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"math"
+	"image"
 	"time"
 
 	"dasa.cc/x/glw"
@@ -11,9 +11,10 @@ import (
 	"golang.org/x/mobile/event/lifecycle"
 	"golang.org/x/mobile/event/paint"
 	"golang.org/x/mobile/event/size"
-	"golang.org/x/mobile/event/touch"
 	"golang.org/x/mobile/gl"
 )
+
+// https://github.com/dskinner/x/blob/e7bfeb25a399a8fbb2b342636f4b142bc141d04c/glw/example/glwidget/glwidget.go
 
 const vsrc = `#version 100
 uniform mat4 proj;
@@ -21,7 +22,7 @@ uniform mat4 model;
 attribute vec2 vert;
 
 void main() {
-	gl_Position = proj * model * vec4(vert.x, vert.y, -1.0f, 1.0f);
+	gl_Position = proj * model * vec4(vert.x, vert.y, 0.0f, 1.0f);
 }`
 
 const fsrc = `#version 100
@@ -35,44 +36,81 @@ type Shape interface {
 	Create()
 	Draw(time.Time)
 	Delete()
+	Gesture(any)
+}
+
+var env = &Env{
+	shapes: []Shape{new(Triangle), new(Square), new(Pentagon)},
+	index:  1,
 }
 
 type Env struct {
-	prg  glw.Program
+	glw.Program
 	Proj glw.U16fv
+	Rect image.Rectangle
 
 	shapes []Shape
 	index  int
+
+	ge any
 }
 
 func (env *Env) Create(ctx gl.Context) {
-	env.prg.MustBuild(vsrc, fsrc)
-	env.prg.Unmarshal(env)
-	env.prg.Use()
+	env.MustBuild(vsrc, fsrc)
+	env.Unmarshal(env)
+	env.Use()
+
 	for _, shape := range env.shapes {
-		env.prg.Unmarshal(shape)
+		env.Unmarshal(shape)
 		shape.Create()
 	}
 
 	ctx.LineWidth(4)
 }
 
-func (env *Env) Layout(ev size.Event) {
+func (env *Env) Layout(ctx gl.Context, ev size.Event) {
 	if ev.HeightPx != 0 {
 		ar := float32(ev.WidthPx) / float32(ev.HeightPx)
 		env.Proj.Ortho(-ar, ar, -1, 1, 0.1, 10.0)
+		ctx.Viewport(0, 0, ev.WidthPx, ev.HeightPx)
+		env.Rect = ev.Bounds()
 	}
 }
 
-func (env *Env) Draw(now time.Time) {
+func (env *Env) Draw(ctx gl.Context) {
+	now := time.Now()
+	ctx.Clear(gl.COLOR_BUFFER_BIT)
+	env.Use()
 	env.shapes[env.index].Draw(now)
+
+	var ge any
+	env.ge, ge = nil, env.ge
+	if ge != nil {
+		env.Gesture(ge)
+	}
 }
 
 func (env *Env) Delete() {
 	for _, shape := range env.shapes {
 		shape.Delete()
 	}
-	env.prg.Delete()
+	env.Program.Delete()
+}
+
+func (env *Env) Gesture(e any) {
+	switch e := e.(type) {
+	case gesture.DoubleTouch:
+		if e.Final() {
+			env.index = (env.index + 1) % len(env.shapes)
+		}
+	default:
+		env.shapes[env.index].Gesture(e)
+	}
+}
+
+func (env *Env) Unproject(x, y float32) (float32, float32) {
+	nx, ny := glw.Uton(x/float32(env.Rect.Dx())), glw.Uton(1-y/float32(env.Rect.Dy()))
+	return env.Proj.Inv2f(nx, ny)
 }
 
 type Triangle struct {
@@ -89,13 +127,11 @@ func (tri *Triangle) Create() {
 	tri.Vert.StepSize(2, 0, 0)
 	tri.Vert.Bind()
 
-	tri.Model.Animator(glw.Duration(1 * time.Second))
+	tri.Model.Transform(glw.TranslateTo(f32.Vec3{0, 0, -1}))
 }
 
 func (tri *Triangle) Draw(now time.Time) {
-	if !tri.Model.Step(now) {
-		tri.Model.Transform(glw.RotateBy(180, f32.Vec3{0, 0, 1}))
-	}
+	tri.Model.Transform(glw.RotateBy(1, f32.Vec3{0, 0, 1}))
 	tri.Model.Update()
 	tri.Vert.Bind()
 	tri.Vert.Draw(gl.TRIANGLES)
@@ -104,6 +140,8 @@ func (tri *Triangle) Draw(now time.Time) {
 func (tri *Triangle) Delete() {
 	tri.Vert.Delete()
 }
+
+func (tri *Triangle) Gesture(e any) {}
 
 type Square struct {
 	Model glw.U16fv
@@ -120,10 +158,14 @@ func (sqr *Square) Create() {
 	sqr.Vert.Uints.Create(gl.STATIC_DRAW, []uint32{0, 1, 2, 0, 2, 3})
 	sqr.Vert.StepSize(2, 0, 0)
 	sqr.Vert.Bind()
+
+	sqr.Model.Transform(glw.TranslateTo(f32.Vec3{0, 0, -1}))
 }
 
 func (sqr *Square) Draw(now time.Time) {
-	sqr.Model.RotateBy(0.01, f32.Vec3{0, 0, 1})
+	if !sqr.Model.Step(now) {
+		// sqr.Model.Transform(glw.RotateBy(90, f32.Vec3{0, 0, 1}))
+	}
 	sqr.Model.Update()
 	sqr.Vert.Bind()
 	sqr.Vert.Draw(gl.TRIANGLES)
@@ -133,33 +175,43 @@ func (sqr *Square) Delete() {
 	sqr.Vert.Delete()
 }
 
+func (sqr *Square) Gesture(e any) {
+	switch e := e.(type) {
+	case gesture.LongPress:
+		if e.Final() {
+			sqr.Model.Stage(time.Now(), glw.RotateBy(90, f32.Vec3{0, 0, 1}))
+		}
+	case gesture.Touch:
+		sqr.TranslateTo(e.Last().X, e.Last().Y)
+	case gesture.Drag:
+		sqr.TranslateTo(e.Last().X, e.Last().Y)
+	case gesture.LongPressDrag:
+		sqr.TranslateTo(e.Last().X, e.Last().Y)
+	}
+}
+
+func (sqr *Square) TranslateTo(x, y float32) {
+	x, y = env.Unproject(x, y)
+	sqr.Model.Stage(time.Now(), glw.TranslateTo(f32.Vec3{x, y, -1}))
+}
+
 type Pentagon struct {
 	Model glw.U16fv
 	Vert  glw.VertexElement
 }
 
 func (pnt *Pentagon) Create() {
-	const (
-		r = math.Pi / 180
-		m = 0.5
-	)
-	rot := func(angle float64) (float32, float32) {
-		c, s := math.Cos(r*angle), math.Sin(r*angle)
-		return float32(m * c), float32(m * s)
-	}
-
-	x1, y1 := rot(90 - 72)
-	x2, y2 := rot(18 - 72)
 	pnt.Vert.Floats.Create(gl.STATIC_DRAW, []float32{
-		0, m,
-		x1, y1,
-		x2, y2,
-		-x2, y2,
-		-x1, y1,
+		+0.000, +0.500,
+		+0.475, +0.154,
+		+0.293, -0.404,
+		-0.293, -0.404,
+		-0.475, +0.154,
 	})
 	pnt.Vert.Uints.Create(gl.STATIC_DRAW, []uint32{0, 1, 1, 2, 2, 3, 3, 4, 4, 0})
 	pnt.Vert.StepSize(2, 0, 0)
 	pnt.Vert.Bind()
+	pnt.Model.Transform(glw.TranslateTo(f32.Vec3{0, 0, -1}))
 }
 
 func (pnt *Pentagon) Draw(now time.Time) {
@@ -172,30 +224,22 @@ func (pnt *Pentagon) Delete() {
 	pnt.Vert.Delete()
 }
 
+func (pnt *Pentagon) Gesture(e any) {}
+
 func main() {
 	app.Main(func(a app.App) {
 		var glctx gl.Context
-		env := &Env{shapes: []Shape{new(Triangle), new(Square), new(Pentagon)}}
+		gef := gesture.EventFilter{Send: a.Send}
 
-		gef := gesture.EventFilter{}
-		gef.Send = func(e interface{}) {
+		for e := range a.Events() {
 			if e = gef.Filter(e); e == nil {
-				return
+				continue
 			}
-			switch e := e.(type) {
-			case gesture.DoubleTouch:
-				if e.Final() {
-					env.index = (env.index + 1) % len(env.shapes)
-				}
-			}
-		}
-
-		for ev := range a.Events() {
-			switch ev := a.Filter(ev).(type) {
+			switch e := a.Filter(e).(type) {
 			case lifecycle.Event:
-				switch ev.Crosses(lifecycle.StageVisible) {
+				switch e.Crosses(lifecycle.StageVisible) {
 				case lifecycle.CrossOn:
-					glctx = glw.With(ev.DrawContext.(gl.Context))
+					glctx = glw.With(e.DrawContext.(gl.Context))
 					env.Create(glctx)
 				case lifecycle.CrossOff:
 					env.Delete()
@@ -203,21 +247,18 @@ func main() {
 				}
 			case size.Event:
 				if glctx == nil {
-					a.Send(ev)
+					a.Send(e)
 				} else {
-					env.Layout(ev)
-					glctx.Viewport(0, 0, ev.WidthPx, ev.HeightPx)
+					env.Layout(glctx, e)
 				}
 			case paint.Event:
 				if glctx != nil {
-					now := time.Now()
-					glctx.Clear(gl.COLOR_BUFFER_BIT)
-					env.Draw(now)
+					env.Draw(glctx)
 					a.Publish()
 					a.Send(paint.Event{})
 				}
-			case touch.Event:
-				gef.Send(ev)
+			case gesture.Touch, gesture.Drag, gesture.LongPress, gesture.LongPressDrag, gesture.DoubleTouch, gesture.DoubleTouchDrag:
+				env.ge = e
 			}
 		}
 	})

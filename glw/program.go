@@ -176,20 +176,20 @@ func (prg Program) Unmarshal(dst interface{}) {
 				f.Set(reflect.ValueOf(U4i(prg.Uniform(name))))
 			case U1f:
 				u := U1f{}
-				u.uniform = newuniform(prg.Uniform(name), u.Update)
+				panic("TODO")
+				// u.uniform = newuniform(prg.Uniform(name), u.Update)
 				f.Set(reflect.ValueOf(u))
 			case U2fv:
 				f.Set(reflect.ValueOf(U2fv{prg.Uniform(name), f32.Vec2{}}))
 			case U3fv:
 				f.Set(reflect.ValueOf(U3fv{prg.Uniform(name), f32.Vec3{}}))
 			case U4fv:
-				u := U4fv{prg.Uniform(name), 0, f32.Vec4{}, nil}
+				u := U4fv{prg.Uniform(name), 0, f32.Vec4{}}
 				f.Set(reflect.ValueOf(u))
 			case U9fv:
 				f.Set(reflect.ValueOf(U9fv(prg.Uniform(name))))
 			case U16fv:
-				u := U16fv{}
-				u.uniform = newuniform(prg.Uniform(name), u.Update)
+				u := U16fv{uniform: newuniform(prg.Uniform(name))}
 				f.Set(reflect.ValueOf(u))
 			default:
 				if f.Kind() == reflect.Struct {
