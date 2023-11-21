@@ -4,6 +4,8 @@
              (srfi srfi-64)
              (fibers)
              (fibers channels)
+             (fibers conditions)
+             (fibers operations)
              (dice))
 
 (test-begin "tests")
@@ -82,15 +84,17 @@
   (test-assert (display (format #f "3v4d6 ~a\n" (result->string (resolve-all a b)))))
   (test-assert (display (format #f "4v4d6 ~a\n" (result->string (resolve-all b b))))))
 
-;; test async
+;; test fibers
 
 (run-fibers
  (lambda () 
    (let* ((a (gen-actions-valid-sorted 3 6))
           (b (gen-actions-valid-sorted 4 6))
           (r (resolve-all a b))
-          (s (resolve-all-fibers a b)))
-     (test-assert (equal? r s))))
+          (s (resolve-all-split a b))
+          (t (resolve-all-fan-out a b)))
+     (test-assert (equal? r s))
+     (test-assert (equal? r t))))
  #:drain? #t)
 
 (test-end "tests")
@@ -113,13 +117,19 @@
   ;; 2.01s
   (benchmark (resolve-all (gen-actions-valid-sorted 4 6) (gen-actions-valid-sorted 5 6)))
   ;; 0.65s
-  (benchmark (resolve-all-fibers (gen-actions-valid-sorted 4 6) (gen-actions-valid-sorted 5 6)))
+  (benchmark (resolve-all-fan-out (gen-actions-valid-sorted 4 6) (gen-actions-valid-sorted 5 6)))
 
-  ;; 16.90s
+  ;; 16.67s
   ;; (benchmark (resolve-all (gen-actions-valid-sorted 5 6) (gen-actions-valid-sorted 5 6)))
-  ;; 5.52s
-  (benchmark (resolve-all-fibers (gen-actions-valid-sorted 5 6) (gen-actions-valid-sorted 5 6)))
-  
+  ;; 5.18s
+  ;; (benchmark (resolve-all-fan-out (gen-actions-valid-sorted 5 6) (gen-actions-valid-sorted 5 6)))
+
+  ;; 42.56s
+  ;; (benchmark (resolve-all-fan-out (gen-actions-valid-sorted 5 6) (gen-actions-valid-sorted 6 6)))
+
+  ;; 335.60s
+  ;; (benchmark (resolve-all-fan-out (gen-actions-valid-sorted 6 6) (gen-actions-valid-sorted 6 6)))
+
   )
 
 (define (bench args)
@@ -131,7 +141,7 @@
   ;; TODO check if tie,loss,part are all equal within each group
   (let* ((a (gen-actions-valid-sorted n0 6))
          (b (gen-actions-valid-sorted n1 6))
-         (rs (list->vector (sort (resolve-each-fibers a b) less-win))))
+         (rs (list->vector (sort (resolve-each-fan-out a b) less-win))))
     (with-output-to-file (format #f "n~av~ad6.dat" n0 n1)
       (lambda ()
         (vector-for-each

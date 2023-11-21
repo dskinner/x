@@ -4,8 +4,11 @@
 (use-modules (ice-9 exceptions)
              (ice-9 format)
              (ice-9 receive)
+             (ice-9 threads)
              (fibers)
              (fibers channels)
+             (fibers conditions)
+             (fibers operations)
              (srfi srfi-1)
              (srfi srfi-9)
              (srfi srfi-43))
@@ -25,12 +28,12 @@
 ;; values would be 1, the next sixteen would be 2, and so on.
 (define-public (gen n s)
   ;; precompute column span sizes
-  (define sizes (vector-unfold (lambda (j) (expt s j)) n))
+  (define sizes (vector-unfold (λ (j) (expt s j)) n))
   
   (vector-unfold
-   (lambda (i)
+   (λ (i)
      (vector-unfold
-      (lambda (j)
+      (λ (j)
         (+ 1 (modulo (truncate (/ i (vector-ref sizes j))) s)))
       n))
    (expt s n)))
@@ -38,12 +41,12 @@
 ;; convenience method returning all actions for sample space nDs.
 (define-public (gen-actions n s)
   (vector->list
-   (vector-map (lambda (_ x) (vector->actions x s)) (gen n s))))
+   (vector-map (λ (_ x) (vector->actions x s)) (gen n s))))
 
 ;; convenience method returning all valid actions sorted for sample space nDs.
 (define-public (gen-actions-valid-sorted n s)
   (filter (negate null-list?) ;; some rolls have no valid actions
-          (map (lambda (a) (sort (filter action-valid? a) (negate less-speed-power)))
+          (map (λ (a) (sort (filter action-valid? a) (negate less-speed-power)))
                (gen-actions n s))))
 
 ;; action is the core game mechanic defined by grouping dice of the same face-value.
@@ -71,7 +74,7 @@
 ;;   (list #<action power: 1 speed: 3> #<action power: 4 speed: 2> ...)
 (define-public (vector->actions v s)
   (vector->list ;; TODO consider srfi-1 for list (unfold ...)
-   (vector-unfold (lambda (i) (make-action (+ 1 i) (vector-count (lambda (_ x) (= x (+ 1 i))) v))) s)))
+   (vector-unfold (λ (i) (make-action (+ 1 i) (vector-count (λ (_ x) (= x (+ 1 i))) v))) s)))
 
 ;; less by speed, then power
 (define-public (less-speed-power a b)
@@ -102,7 +105,7 @@
 
 ;; convenience to resolve and analyze a conflict.
 ;; (define-public (conflict-resolve-and-analyze a b)
-;;   (call-with-values (lambda () (conflict-resolve a 0 b 0)) conflict-analyze))
+;;   (call-with-values (λ () (conflict-resolve a 0 b 0)) conflict-analyze))
 
 (define-record-type result
   (make-result win tie loss part)
@@ -142,65 +145,143 @@
 
 ;; resolve conflicts and accumulate result for dice set.
 (define-public (resolve-all as bs)
-  (let ((r (make-result 0 0 0 0)))
-    (for-each
-     (lambda (a)
-       (for-each
-        (lambda (b)
-          (receive (x y)
-              (conflict-resolve a 0 b 0)
-            (result-analyze! r x y)))
-        bs))
-     as)
-    r))
-
-(define-public (resolve-all-fibers as bs)
-  (let ((rs (make-channel)))
-    (for-each
-     (lambda (a)
-       (spawn-fiber
-        (lambda ()
-          (put-message rs (resolve-action-list a bs)))
-        #:parallel? #t))
-     as)
-
-    (let ((r (make-result 0 0 0 0)))
-      (let lp ((n (- (length as) 1)))
-        (result-merge! r (get-message rs))
-        (unless (= 0 n) (lp (- n 1))))
-      r)))
+  (define r (make-result 0 0 0 0))
+  (for-each
+   (λ (a)
+     (for-each
+      (λ (b)
+        (receive (x y) (conflict-resolve a 0 b 0)
+          (result-analyze! r x y)))
+      bs))
+   as)
+  r)
 
 ;; resolve conflicts and accumulate results for individual action sets of dice set.
 (define-public (resolve-each as bs)
-  (let ((rs '()))
+  (define rs '())
+  (for-each
+   (λ (a)
+     (define r (make-result 0 0 0 0))
+     (for-each
+      (λ (b)
+        (receive (x y) (conflict-resolve a 0 b 0)
+          (result-analyze! r x y)))
+      bs)
+     (set! rs (append rs (list r))))
+   as)
+  rs)
+
+(define-syntax-rule (<- ch fn)
+  (wrap-operation (get-operation ch) fn))
+
+(define-syntax-rule (<> sig fn)
+  (wrap-operation (wait-operation sig) fn))
+
+(define-syntax-rule (select ops ...)
+  (perform-operation (choice-operation ops ...)))
+
+;; TODO could also do this with a (type chan (channel condition))
+;;      where for-message expands to when #t select <-work or <>done
+;; (define (worker)
+;;   (define r (make-result 0 0 0 0))
+;;   (for-message
+;;    (λ (a)
+;;      (for-each
+;;       (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (result-analyze! r x y)))
+;;       bs))
+;;    work)
+;;   (put-message resp r))
+
+(define-public (resolve-all-fan-out as bs)
+  (define done (make-condition))
+  (define work (make-channel))
+  (define resp (make-channel))
+
+  (define (worker)
+    (define r (make-result 0 0 0 0))
+    (while #t
+      (select
+       (<- work
+           (λ (a)
+             (for-each
+              (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (result-analyze! r x y)))
+              bs)))
+       (<> done break)))
+    (put-message resp r))
+
+  (define nworkers 10)
+
+  (let lp ((n nworkers))
+    (spawn-fiber worker #:parallel? #t)
+    (when (> n 1) (lp (- n 1))))
+  
+  (spawn-fiber
+   (λ () (for-each (λ (a) (put-message work a)) as) (signal-condition! done))
+   #:parallel? #t)
+  
+  (define r (make-result 0 0 0 0))
+  (let lp ((n nworkers))
+    (result-merge! r (get-message resp))
+    (when (> n 1) (lp (- n 1))))
+  r)
+
+(define-public (resolve-each-fan-out as bs)
+  (define done (make-condition))
+  (define work (make-channel))
+  (define resp (make-channel))
+
+  (define (worker)
+    (while #t
+      (select
+       (<- work
+           (λ (a)
+             (define r (make-result 0 0 0 0))
+             (for-each
+              (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (result-analyze! r x y)))
+              bs)
+             (put-message resp r)))
+       (<> done break))))
+
+  (define nworkers 10)
+
+  (let lp ((n nworkers))
+    (spawn-fiber worker #:parallel? #t)
+    (when (> n 1) (lp (- n 1))))
+  
+  (spawn-fiber
+   (λ () (for-each (λ (a) (put-message work a)) as) (signal-condition! done))
+   #:parallel? #t)
+  
+  (define rs '())
+  (let lp ((n (length as)))
+    (set! rs (append rs (list (get-message resp))))
+    (when (> n 1) (lp (- n 1))))
+  rs)
+
+(define-public (resolve-all-split as bs)
+  (define (split-into l n)
+    (receive (a b) (split-at l (/ (length l) 2))
+      (if (<= n 1)
+          (append (list a) (list b))
+          (append (split-into a (- n 1)) (split-into b (- n 1))))))
+  
+  (define resp (make-channel))
+  
+  (define (worker as)
+    (define r (make-result 0 0 0 0))
     (for-each
-     (lambda (a)
-       (set! rs (append rs (list (resolve-action-list a bs)))))
+     (λ (a)
+       (for-each
+        (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (result-analyze! r x y)))
+        bs))
      as)
-    rs))
+    (put-message resp r))
+  
+  (define chunks (split-into as (sqrt (* 2 (current-processor-count)))))
+  (for-each (λ (chunk) (spawn-fiber (λ () (worker chunk)) #:parallel? #t)) chunks)
 
-(define-public (resolve-each-fibers as bs)
-  (let ((chan (make-channel)))
-    (for-each
-     (lambda (a)
-       (spawn-fiber
-        (lambda ()
-          (put-message chan (resolve-action-list a bs)))
-        #:parallel? #t))
-     as)
-
-    (let ((rs '()))
-      (let lp ((n (- (length as) 1)))
-        (set! rs (append rs (list (get-message chan))))
-        (unless (= 0 n) (lp (- n 1))))
-      rs)))
-
-(define (resolve-action-list a bs)
-  (let ((r (make-result 0 0 0 0)))
-    (for-each
-     (lambda (b)
-       (receive (x y)
-           (conflict-resolve a 0 b 0)
-         (result-analyze! r x y)))
-     bs)
-    r))
+  (define r (make-result 0 0 0 0))
+  (let lp ((n (length chunks)))
+    (result-merge! r (get-message resp))
+    (when (> n 1) (lp (- n 1))))
+  r)
