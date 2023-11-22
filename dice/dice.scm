@@ -1,5 +1,5 @@
 (define-module (dice)
-  #:export (action action? make-action action-speed action-power))
+  #:export (action action? make-action action-speed action-power result->string))
 
 (use-modules (ice-9 exceptions)
              (ice-9 format)
@@ -94,54 +94,34 @@
         ((less-speed-power (car b) (car a)) (conflict-resolve (cdr a) (+ 1 x) (action-list-penalize b) y))
         (else (raise-exception (make-exception-with-message "unreachable case"))))) ;; hopefully
 
-;; analyze conflict result to infer win, loss, tie, partial.
-;; (define-public (conflict-analyze x y) ;; actions resulted in ...
-;;   (cond ((and (= 0 x) (= 0 y)) 'tie)  ;; no penalties
-;;         ((and (< 0 x) (= 0 y)) 'win)  ;; penalties against y
-;;         ((and (= 0 x) (< 0 y)) 'loss) ;; penalties against x
-;;         ((= 0 (- x y)) 'part) ;; equal penalties against x and y
-;;         ((< 0 (- x y)) 'win)  ;; penalties favoring x over y
-;;         (else 'loss)))        ;; penalties favoring y over x
+(define-public (make-result win tie loss part)
+  (case-lambda*
+    ((#:key (percent? #f))
+     (if percent?
+         (let ((t (/ 100 (+ win tie loss part))))
+           (values (* t win) (* t tie) (* t loss) (* t part)))
+         (values win tie loss part)))
+    ((r) ;; merge result
+     (receive (a b c d) (r)
+       (set! win (+ a win))
+       (set! tie (+ b tie))
+       (set! loss (+ c loss))
+       (set! part (+ d part))))
+    ((x y) ;; analyze conflict result to infer win, loss, tie, partial.
+     (cond ((and (= 0 x) (= 0 y)) (set! tie (1+ tie))) ;; no penalties
+           ((and (< 0 x) (= 0 y)) (set! win (1+ win))) ;; penalties against y
+           ((and (= 0 x) (< 0 y)) (set! loss (1+ loss))) ;; penalties against x
+           ((= 0 (- x y)) (set! part (1+ part))) ;; equal penalties against x and y
+           ((< 0 (- x y)) (set! win (1+ win))) ;; penalties favoring x over y
+           (else (set! loss (1+ loss))))))) ;; penalties favoring y over x
 
-;; convenience to resolve and analyze a conflict.
-;; (define-public (conflict-resolve-and-analyze a b)
-;;   (call-with-values (λ () (conflict-resolve a 0 b 0)) conflict-analyze))
+(define* (result->string r #:key (percent? #f))
+  (receive (win tie loss part) (r #:percent? percent?)
+    (if percent?
+        (format #f "<result win: ~,2f% tie: ~,2f% loss: ~,2f% part: ~,2f%>" win tie loss part)
+        (format #f "<result win: ~a tie: ~a loss: ~a part: ~a>" win tie loss part))))
 
-(define-record-type result
-  (make-result win tie loss part)
-  result?
-  (win result-win set-result-win!)
-  (tie result-tie set-result-tie!)
-  (loss result-loss set-result-loss!)
-  (part result-part set-result-part!))
-
-;; analyze and record action results from the perspective of x.
-(define-public (result-analyze! r x y)
-  (cond ((and (= 0 x) (= 0 y)) (set-result-tie! r (+ 1 (result-tie r)))) ;; no penalties
-        ((and (< 0 x) (= 0 y)) (set-result-win! r (+ 1 (result-win r)))) ;; penalties against y
-        ((and (= 0 x) (< 0 y)) (set-result-loss! r (+ 1 (result-loss r)))) ;; penalties against x
-        ((= 0 (- x y)) (set-result-part! r (+ 1 (result-part r)))) ;; equal penalties against x and y
-        ((< 0 (- x y)) (set-result-win! r (+ 1 (result-win r)))) ;; penalties favoring x over y
-        (else (set-result-loss! r (+ 1 (result-loss r))))))      ;; penalties favoring y over x
-
-;; additive merge s into r.
-(define-public (result-merge! r s)
-  (set-result-win! r (+ (result-win r) (result-win s)))
-  (set-result-tie! r (+ (result-tie r) (result-tie s)))
-  (set-result-loss! r (+ (result-loss r) (result-loss s)))
-  (set-result-part! r (+ (result-part r) (result-part s))))
-
-(define-public (result-percent-coef r) (/ 100 (+ (result-win r) (result-tie r) (result-loss r) (result-part r))))
-(define-public (result-win-percent r) (* (result-percent-coef r) (result-win r)))
-(define-public (result->string r)
-  (let ((t (result-percent-coef r)))
-    (format #f "win:~,2f% tie:~,2f% loss:~,2f% part:~,2f%"
-            (* t (result-win r))
-            (* t (result-tie r))
-            (* t (result-loss r))
-            (* t (result-part r)))))
-
-(define-public (less-win a b) (< (result-win a) (result-win b)))
+(define-public (less-win a b) (< (a) (b)))
 
 ;; resolve conflicts and accumulate result for dice set.
 (define-public (resolve-all as bs)
@@ -149,9 +129,7 @@
   (for-each
    (λ (a)
      (for-each
-      (λ (b)
-        (receive (x y) (conflict-resolve a 0 b 0)
-          (result-analyze! r x y)))
+      (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (r x y)))
       bs))
    as)
   r)
@@ -163,9 +141,7 @@
    (λ (a)
      (define r (make-result 0 0 0 0))
      (for-each
-      (λ (b)
-        (receive (x y) (conflict-resolve a 0 b 0)
-          (result-analyze! r x y)))
+      (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (r x y)))
       bs)
      (set! rs (append rs (list r))))
    as)
@@ -192,6 +168,8 @@
 ;;    work)
 ;;   (put-message resp r))
 
+(define default-worker-count 10)
+
 (define-public (resolve-all-fan-out as bs)
   (define done (make-condition))
   (define work (make-channel))
@@ -204,14 +182,12 @@
        (<- work
            (λ (a)
              (for-each
-              (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (result-analyze! r x y)))
+              (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (r x y)))
               bs)))
        (<> done break)))
     (put-message resp r))
 
-  (define nworkers 10)
-
-  (let lp ((n nworkers))
+  (let lp ((n default-worker-count))
     (spawn-fiber worker #:parallel? #t)
     (when (> n 1) (lp (- n 1))))
   
@@ -220,8 +196,8 @@
    #:parallel? #t)
   
   (define r (make-result 0 0 0 0))
-  (let lp ((n nworkers))
-    (result-merge! r (get-message resp))
+  (let lp ((n default-worker-count))
+    (r (get-message resp))
     (when (> n 1) (lp (- n 1))))
   r)
 
@@ -237,14 +213,12 @@
            (λ (a)
              (define r (make-result 0 0 0 0))
              (for-each
-              (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (result-analyze! r x y)))
+              (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (r x y)))
               bs)
              (put-message resp r)))
        (<> done break))))
 
-  (define nworkers 10)
-
-  (let lp ((n nworkers))
+  (let lp ((n default-worker-count))
     (spawn-fiber worker #:parallel? #t)
     (when (> n 1) (lp (- n 1))))
   
@@ -272,7 +246,7 @@
     (for-each
      (λ (a)
        (for-each
-        (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (result-analyze! r x y)))
+        (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (r x y)))
         bs))
      as)
     (put-message resp r))
@@ -282,6 +256,6 @@
 
   (define r (make-result 0 0 0 0))
   (let lp ((n (length chunks)))
-    (result-merge! r (get-message resp))
+    (r (get-message resp))
     (when (> n 1) (lp (- n 1))))
   r)

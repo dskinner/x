@@ -13,8 +13,8 @@
 ;; all vector elements are unique
 (let ((v (gen 3 4)))
   (vector-for-each
-   (lambda (_ a)
-     (test-eq 1 (vector-count (lambda (_ b) (equal? b a)) v)))
+   (λ (_ a)
+     (test-eq 1 (vector-count (λ (_ b) (equal? b a)) v)))
    v))
 
 ;; action equality
@@ -80,21 +80,19 @@
 
 (let ((a (gen-actions-valid-sorted 3 6))
       (b (gen-actions-valid-sorted 4 6)))
-  (test-assert (display (format #f "3v3d6 ~a\n" (result->string (resolve-all a a)))))
-  (test-assert (display (format #f "3v4d6 ~a\n" (result->string (resolve-all a b)))))
-  (test-assert (display (format #f "4v4d6 ~a\n" (result->string (resolve-all b b))))))
+  (test-assert (display (format #f "3v3d6 ~a\n" (result->string (resolve-all a a) #:percent? #t))))
+  (test-assert (display (format #f "3v4d6 ~a\n" (result->string (resolve-all a b) #:percent? #t))))
+  (test-assert (display (format #f "4v4d6 ~a\n" (result->string (resolve-all b b) #:percent? #t)))))
 
 ;; test fibers
 
 (run-fibers
- (lambda () 
+ (λ () 
    (let* ((a (gen-actions-valid-sorted 3 6))
           (b (gen-actions-valid-sorted 4 6))
-          (r (resolve-all a b))
-          (s (resolve-all-split a b))
-          (t (resolve-all-fan-out a b)))
-     (test-assert (equal? r s))
-     (test-assert (equal? r t))))
+          (r (result->string (resolve-all a b)))
+          (s (result->string (resolve-all-fan-out a b))))
+     (test-assert (equal? r s))))
  #:drain? #t)
 
 (test-end "tests")
@@ -122,7 +120,7 @@
   ;; 16.67s
   ;; (benchmark (resolve-all (gen-actions-valid-sorted 5 6) (gen-actions-valid-sorted 5 6)))
   ;; 5.18s
-  ;; (benchmark (resolve-all-fan-out (gen-actions-valid-sorted 5 6) (gen-actions-valid-sorted 5 6)))
+  (benchmark (resolve-all-fan-out (gen-actions-valid-sorted 5 6) (gen-actions-valid-sorted 5 6)))
 
   ;; 42.56s
   ;; (benchmark (resolve-all-fan-out (gen-actions-valid-sorted 5 6) (gen-actions-valid-sorted 6 6)))
@@ -143,10 +141,10 @@
          (b (gen-actions-valid-sorted n1 6))
          (rs (list->vector (sort (resolve-each-fan-out a b) less-win))))
     (with-output-to-file (format #f "n~av~ad6.dat" n0 n1)
-      (lambda ()
+      (λ ()
         (vector-for-each
-         (lambda (i r)
-           (display (format #f "~f ~f\n" (/ (+ 1 i) (vector-length rs)) (result-win-percent r))))
+         (λ (i r)
+           (display (format #f "~f ~f\n" (/ (+ 1 i) (vector-length rs)) (r #:percent? #t))))
          rs)))))
 
 (define (-plot)
