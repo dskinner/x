@@ -134,13 +134,11 @@
   (display (format #f "%%%% Starting benchmarks ~a\n" args))
   (run-fibers -bench #:drain? #t))
 
-(define (plot-vs n0 n1)
+(define (plot-resolve title a b)
   ;; sorting by wins illustrates the small number of groups all rolls will fall into
   ;; TODO check if tie,loss,part are all equal within each group
-  (let* ((a (gen-actions-valid-sorted n0 6))
-         (b (gen-actions-valid-sorted n1 6))
-         (rs (list->vector (sort (resolve-each-fan-out a b) less-win))))
-    (with-output-to-file (format #f "n~av~ad6.dat" n0 n1)
+  (let ((rs (list->vector (sort (resolve-each-fan-out a b) less-win))))
+    (with-output-to-file (format #f "~a.dat" title)
       (λ ()
         (vector-for-each
          (λ (i r)
@@ -148,9 +146,19 @@
          rs)))))
 
 (define (-plot)
-  (plot-vs 4 3)
-  (plot-vs 4 4)
-  (plot-vs 4 5))
+  (define n3d6 (gen-actions-valid-sorted 3 6))
+  (define n4d6 (gen-actions-valid-sorted 4 6))
+  (define n4d6-mod2432 (gen-actions-valid-sorted-mod 4 6 mod-actions-2432))
+  (define n4d6-mod1g (gen-actions-valid-sorted-mod 4 6 mod-actions-1g))
+  (define n5d6 (gen-actions-valid-sorted 5 6))
+  (plot-resolve "n4v3d6" n4d6 n3d6)
+  (plot-resolve "n4v4d6" n4d6 n4d6)
+  (plot-resolve "n4v5d6" n4d6 n5d6)
+  (plot-resolve "mod2432-n4v4d6" n4d6-mod2432 n4d6)
+  (plot-resolve "mod2432-n4v5d6" n4d6-mod2432 n5d6)
+  (plot-resolve "mod1g-n4v4d6" n4d6-mod1g n4d6)
+  (plot-resolve "mod1g-n4v5d6" n4d6-mod1g n5d6)
+  )
 
 (define (plot args)
   (display (format #f "%%%% Starting plots ~a\n" args))

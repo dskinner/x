@@ -43,19 +43,31 @@
   (vector->list
    (vector-map (λ (_ x) (vector->actions x s)) (gen n s))))
 
+;; (define-public (mod-actions actions mod)
+;;   (map mod actions))
+
+;; TODO extract out mod-valid-sorted and then call like
+;;      (mod-actions (gen-action 3 6) mod-2432 mod-valid-sorted)
+;;
 ;; convenience method returning all valid actions sorted for sample space nDs.
 (define-public (gen-actions-valid-sorted n s)
   (filter (negate null-list?) ;; some rolls have no valid actions
           (map (λ (a) (sort (filter action-valid? a) (negate less-speed-power)))
                (gen-actions n s))))
 
+;; tmp convenience
+(define-public (gen-actions-valid-sorted-mod n s mod)
+  (filter (negate null-list?) ;; some rolls have no valid actions
+          (map (λ (a) (sort (filter action-valid? a) (negate less-speed-power)))
+               (map mod (gen-actions n s)))))
+
 ;; action is the core game mechanic defined by grouping dice of the same face-value.
 ;; There must be at least two of the same face-value to be considered a valid action.
 (define-record-type action
   (make-action power speed)
   action?
-  (power action-power)  ;; face-value of dice roll
-  (speed action-speed)) ;; number of dice for given face-value
+  (power action-power)                    ;; face-value of dice roll
+  (speed action-speed set-action-speed!)) ;; number of dice for given face-value
 
 ;; predicate identifying if at least two dice rolled the same face-value.
 (define-public (action-valid? a) (<= 2 (action-speed a)))
@@ -163,7 +175,7 @@
 ;;   (for-message
 ;;    (λ (a)
 ;;      (for-each
-;;       (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (result-analyze! r x y)))
+;;       (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (r x y)))
 ;;       bs))
 ;;    work)
 ;;   (put-message resp r))
@@ -231,6 +243,30 @@
     (set! rs (append rs (list (get-message resp))))
     (when (> n 1) (lp (- n 1))))
   rs)
+
+(define-public (copy-actions actions)
+  (unfold null-list?
+          (λ (a) (make-action (action-power (car a)) (action-speed (car a))))
+          cdr
+          actions))
+
+;; 2 is 4, 3 is 2
+(define-public (mod-actions-2432 actions)
+  (define l (copy-actions actions))
+  (set-action-speed! (fourth l) (+ (action-speed (fourth l)) (action-speed (second l))))
+  (set-action-speed! (second l) (action-speed (third l)))
+  (set-action-speed! (third l) 0)
+  l)
+
+;; lonely 1 can be grouped with any; this chooses "best" current which isn't necessarly the best move.
+(define-public (mod-actions-1g actions)
+  (define l (copy-actions actions))
+  (set-action-speed! (first l) 0)
+  (define best (first (sort l (negate less-speed-power))))
+  (set-action-speed! best (1+ (action-speed best)))
+  l)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define-public (resolve-all-split as bs)
   (define (split-into l n)
