@@ -1,5 +1,5 @@
 (define-module (dice)
-  #:export (action action? make-action action-speed action-power result->string))
+  #:export (gen-actions action action? make-action action-speed action-power result->string))
 
 (use-modules (ice-9 exceptions)
              (ice-9 format)
@@ -38,28 +38,11 @@
       n))
    (expt s n)))
 
-;; convenience method returning all actions for sample space nDs.
-(define-public (gen-actions n s)
-  (vector->list
-   (vector-map (λ (_ x) (vector->actions x s)) (gen n s))))
 
-;; (define-public (mod-actions actions mod)
-;;   (map mod actions))
-
-;; TODO extract out mod-valid-sorted and then call like
-;;      (mod-actions (gen-action 3 6) mod-2432 mod-valid-sorted)
-;;
-;; convenience method returning all valid actions sorted for sample space nDs.
-(define-public (gen-actions-valid-sorted n s)
-  (filter (negate null-list?) ;; some rolls have no valid actions
-          (map (λ (a) (sort (filter action-valid? a) (negate less-speed-power)))
-               (gen-actions n s))))
-
-;; tmp convenience
-(define-public (gen-actions-valid-sorted-mod n s mod)
-  (filter (negate null-list?) ;; some rolls have no valid actions
-          (map (λ (a) (sort (filter action-valid? a) (negate less-speed-power)))
-               (map mod (gen-actions n s)))))
+;; convenience method returning all actions for sample space nDs; always applies valid-sorted.
+(define* (gen-actions n s . mods)
+  (map (if mods (apply compose (append (list valid-sorted) mods)) valid-sorted)
+       (vector->list (vector-map (λ (_ x) (vector->actions x s)) (gen n s)))))
 
 ;; action is the core game mechanic defined by grouping dice of the same face-value.
 ;; There must be at least two of the same face-value to be considered a valid action.
@@ -73,19 +56,19 @@
 (define-public (action-valid? a) (<= 2 (action-speed a)))
 
 ;; an action penalty removes a die from the set, potentially making the action no longer valid.
-(define-public (action-with-penalty a)
+(define-public (penalize-action a)
   (make-action (action-power a) (- (action-speed a) 1)))
 
 ;; while conflict resolution has many possibilities, this implementation assumes the desire to penalize
 ;; the action with the highest power and speed; this may not necessarily be the best move.
-(define-public (action-list-penalize l)
-  (sort (filter action-valid? (cons (action-with-penalty (car l)) (cdr l))) (negate less-speed-power)))
+(define-public (penalize-action-list l)
+  (valid-sorted (cons (penalize-action (car l)) (cdr l))))
 
 ;; transforms a vector of dice rolls into a list of actions, e.g. 5d6:
 ;;   (vector->actions #(1 1 1 4 4) 6)
 ;;   (list #<action power: 1 speed: 3> #<action power: 4 speed: 2> ...)
 (define-public (vector->actions v s)
-  (vector->list ;; TODO consider srfi-1 for list (unfold ...)
+  (vector->list
    (vector-unfold (λ (i) (make-action (+ 1 i) (vector-count (λ (_ x) (= x (+ 1 i))) v))) s)))
 
 ;; less by speed, then power
@@ -96,36 +79,54 @@
     (= (action-speed a) (action-speed b))
     (< (action-power a) (action-power b)))))
 
+;; mods only ever act upon an action set; i.e. a single roll of dice.
+(define-public (valid-sorted actions)
+  (sort (filter action-valid? actions) (negate less-speed-power)))
+
+;; 2 is 4, 3 is 2
+(define-public (mod-2432! actions)
+  (set-action-speed! (fourth actions) (+ (action-speed (fourth actions)) (action-speed (second actions))))
+  (set-action-speed! (second actions) (action-speed (third actions)))
+  (set-action-speed! (third actions) 0)
+  actions)
+
+;; lonely 1 can be grouped with any; this chooses "best" current which isn't necessarly the best move.
+(define-public (mod-1g! actions)
+  (set-action-speed! (first actions) 0)
+  (define best (first (sort actions (negate less-speed-power))))
+  (set-action-speed! best (1+ (action-speed best)))
+  actions)
+
 ;; resolve a against b with seeds x and y; a and b must be sorted and valid action lists.
 (define-public (conflict-resolve a x b y)
   (cond ((and (nil? a) (nil? b)) (values x y))
         ((nil? a) (conflict-resolve a x (cdr b) (+ 1 y)))
         ((nil? b) (conflict-resolve (cdr a) (+ 1 x) b y))
         ((equal? (car a) (car b)) (conflict-resolve (cdr a) x (cdr b) y))
-        ((less-speed-power (car a) (car b)) (conflict-resolve (action-list-penalize a) x (cdr b) (+ 1 y)))
-        ((less-speed-power (car b) (car a)) (conflict-resolve (cdr a) (+ 1 x) (action-list-penalize b) y))
+        ((less-speed-power (car a) (car b)) (conflict-resolve (penalize-action-list a) x (cdr b) (+ 1 y)))
+        ((less-speed-power (car b) (car a)) (conflict-resolve (cdr a) (+ 1 x) (penalize-action-list b) y))
         (else (raise-exception (make-exception-with-message "unreachable case"))))) ;; hopefully
 
 (define-public (make-result win tie loss part)
   (case-lambda*
-    ((#:key (percent? #f))
-     (if percent?
-         (let ((t (/ 100 (+ win tie loss part))))
-           (values (* t win) (* t tie) (* t loss) (* t part)))
-         (values win tie loss part)))
-    ((r) ;; merge result
-     (receive (a b c d) (r)
-       (set! win (+ a win))
-       (set! tie (+ b tie))
-       (set! loss (+ c loss))
-       (set! part (+ d part))))
-    ((x y) ;; analyze conflict result to infer win, loss, tie, partial.
-     (cond ((and (= 0 x) (= 0 y)) (set! tie (1+ tie))) ;; no penalties
-           ((and (< 0 x) (= 0 y)) (set! win (1+ win))) ;; penalties against y
-           ((and (= 0 x) (< 0 y)) (set! loss (1+ loss))) ;; penalties against x
-           ((= 0 (- x y)) (set! part (1+ part))) ;; equal penalties against x and y
-           ((< 0 (- x y)) (set! win (1+ win))) ;; penalties favoring x over y
-           (else (set! loss (1+ loss))))))) ;; penalties favoring y over x
+   ((#:key (percent? #f))
+    (if percent?
+        (let ((t (/ 100 (+ win tie loss part))))
+          (values (* t win) (* t tie) (* t loss) (* t part)))
+        (values win tie loss part)))
+   ((r) ;; merge result
+    (receive (a b c d) (r)
+      (set! win (+ a win))
+      (set! tie (+ b tie))
+      (set! loss (+ c loss))
+      (set! part (+ d part))))
+   ((x y) ;; analyze conflict result to infer win, loss, tie, partial.
+    (cond ((and (= 0 x) (= 0 y)) (set! tie (1+ tie))) ;; no penalties
+          ((and (< 0 x) (= 0 y)) (set! win (1+ win))) ;; penalties against y
+          ((and (= 0 x) (< 0 y)) (set! loss (1+ loss))) ;; penalties against x
+          ((= 0 (- x y)) (set! part (1+ part))) ;; equal penalties against x and y
+          ((< 0 (- x y)) (set! win (1+ win))) ;; penalties favoring x over y
+          (else (set! loss (1+ loss))))))) ;; penalties favoring y over x
 
 (define* (result->string r #:key (percent? #f))
   (receive (win tie loss part) (r #:percent? percent?)
@@ -141,7 +142,8 @@
   (for-each
    (λ (a)
      (for-each
-      (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (r x y)))
+      (λ (b)
+        (receive (x y) (conflict-resolve a 0 b 0) (r x y)))
       bs))
    as)
   r)
@@ -180,7 +182,7 @@
 ;;    work)
 ;;   (put-message resp r))
 
-(define default-worker-count 10)
+(define default-worker-count (min 1000 (ash 1 (current-processor-count))))
 
 (define-public (resolve-all-fan-out as bs)
   (define done (make-condition))
@@ -199,14 +201,17 @@
        (<> done break)))
     (put-message resp r))
 
+  ;; spawn workers
   (let lp ((n default-worker-count))
     (spawn-fiber worker #:parallel? #t)
     (when (> n 1) (lp (- n 1))))
-  
+
+  ;; send work
   (spawn-fiber
    (λ () (for-each (λ (a) (put-message work a)) as) (signal-condition! done))
    #:parallel? #t)
-  
+
+  ;; collect results
   (define r (make-result 0 0 0 0))
   (let lp ((n default-worker-count))
     (r (get-message resp))
@@ -230,68 +235,19 @@
              (put-message resp r)))
        (<> done break))))
 
+  ;; spawn workers
   (let lp ((n default-worker-count))
     (spawn-fiber worker #:parallel? #t)
     (when (> n 1) (lp (- n 1))))
-  
+
+  ;; send work
   (spawn-fiber
    (λ () (for-each (λ (a) (put-message work a)) as) (signal-condition! done))
    #:parallel? #t)
-  
+
+  ;; collect results
   (define rs '())
   (let lp ((n (length as)))
     (set! rs (append rs (list (get-message resp))))
     (when (> n 1) (lp (- n 1))))
   rs)
-
-(define-public (copy-actions actions)
-  (unfold null-list?
-          (λ (a) (make-action (action-power (car a)) (action-speed (car a))))
-          cdr
-          actions))
-
-;; 2 is 4, 3 is 2
-(define-public (mod-actions-2432 actions)
-  (define l (copy-actions actions))
-  (set-action-speed! (fourth l) (+ (action-speed (fourth l)) (action-speed (second l))))
-  (set-action-speed! (second l) (action-speed (third l)))
-  (set-action-speed! (third l) 0)
-  l)
-
-;; lonely 1 can be grouped with any; this chooses "best" current which isn't necessarly the best move.
-(define-public (mod-actions-1g actions)
-  (define l (copy-actions actions))
-  (set-action-speed! (first l) 0)
-  (define best (first (sort l (negate less-speed-power))))
-  (set-action-speed! best (1+ (action-speed best)))
-  l)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define-public (resolve-all-split as bs)
-  (define (split-into l n)
-    (receive (a b) (split-at l (/ (length l) 2))
-      (if (<= n 1)
-          (append (list a) (list b))
-          (append (split-into a (- n 1)) (split-into b (- n 1))))))
-  
-  (define resp (make-channel))
-  
-  (define (worker as)
-    (define r (make-result 0 0 0 0))
-    (for-each
-     (λ (a)
-       (for-each
-        (λ (b) (receive (x y) (conflict-resolve a 0 b 0) (r x y)))
-        bs))
-     as)
-    (put-message resp r))
-  
-  (define chunks (split-into as (sqrt (* 2 (current-processor-count)))))
-  (for-each (λ (chunk) (spawn-fiber (λ () (worker chunk)) #:parallel? #t)) chunks)
-
-  (define r (make-result 0 0 0 0))
-  (let lp ((n (length chunks)))
-    (r (get-message resp))
-    (when (> n 1) (lp (- n 1))))
-  r)
