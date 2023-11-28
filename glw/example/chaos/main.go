@@ -23,7 +23,7 @@ attribute vec3 vert;
 varying vec3 pos;
 
 void main() {
-	gl_Position = proj * model * vec4(vert.x, vert.y, vert.z, 1.0f);
+	gl_Position = proj * model * vec4(vert.x, vert.y, vert.z, 1.0);
 	pos = gl_Position.xyz;
 }`
 
@@ -33,7 +33,7 @@ precision mediump float;
 varying vec3 pos;
 
 void main() {
-	gl_FragColor = vec4(1.0f-pos.x, pos.y, 1.0f-pos.z, 0.8f);
+	gl_FragColor = vec4(1.0-pos.x, pos.y, 1.0-pos.z, 0.8);
 }`
 
 type Chaos struct {
@@ -42,6 +42,81 @@ type Chaos struct {
 	Model glw.U16fv
 	Vert  glw.VertexArray
 }
+
+// func (chs *Chaos) Create(ctx gl.Context) {
+// 	chs.prg.MustBuild(vsrc, fsrc)
+// 	chs.prg.Unmarshal(chs)
+// 	chs.prg.Use()
+
+// 	const (
+// 		r = math.Pi / 180
+// 		m = 0.5
+// 	)
+// 	rot := func(angle float64) (float32, float32) {
+// 		c, s := math.Cos(r*angle), math.Sin(r*angle)
+// 		return float32(m * c), float32(m * s)
+// 	}
+
+// 	x1, y1 := rot(90 - 72)
+// 	x2, y2 := rot(18 - 72)
+
+// 	pnt := []f32.Vec2{
+// 		{0, m},
+// 		{x1, y1},
+// 		{x2, y2},
+// 		{-x2, y2},
+// 		{-x1, y1},
+// 	}
+// 	pts := []f32.Vec2{
+// 		{0, m},
+// 		{x1, y1},
+// 		{x2, y2},
+// 		{-x2, y2},
+// 		{-x1, y1},
+// 	}
+
+// 	midpoint := func(a, b f32.Vec2) f32.Vec2 {
+// 		return f32.Vec2{(a[0] + b[0]) / 2, (a[1] + b[1]) / 2}
+// 	}
+
+// 	midpoint3fv := func(a, b f32.Vec3) f32.Vec3 {
+// 		return f32.Vec3{(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2}
+// 	}
+
+// 	game := func(sx, sy float32, n int) {
+// 		at := f32.Vec2{sx, sy}
+// 		pts = append(pts, at)
+// 		for i := 0; i < n; i++ {
+// 			at = midpoint(at, pnt[rand.Intn(len(pnt))])
+// 			pts = append(pts, at)
+// 		}
+// 	}
+// 	game(0, 0, 20000)
+
+// 	const nverts = 3
+// 	verts := make([]float32, len(pts)*nverts)
+// 	for i, pt := range pts {
+// 		verts[nverts*i] = pt[0]
+// 		verts[nverts*i+1] = pt[1]
+// 		verts[nverts*i+2] = (float32(rand.Intn(100)) / float32(100)) - 0.5
+// 	}
+
+// 	// indices := make([]uint32, len(verts))
+// 	// for i := range indices {
+// 	// 	indices[i] = uint32((i + 1) / 2)
+// 	// }
+// 	// indices[len(indices)-1] = indices[len(indices)-2]
+
+// 	chs.Vert.Floats.Create(gl.STREAM_DRAW, verts)
+// 	// chs.Vert.Uints.Create(gl.STATIC_DRAW, indices)
+// 	chs.Vert.StepSize(nverts, 0, 0)
+// 	chs.Vert.Bind()
+
+// 	chs.Model.Transform(glw.TranslateTo(f32.Vec3{0, 0, -1}))
+
+// 	ctx.Enable(gl.BLEND)
+// 	ctx.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+// }
 
 func (chs *Chaos) Create(ctx gl.Context) {
 	chs.prg.MustBuild(vsrc, fsrc)
@@ -60,14 +135,20 @@ func (chs *Chaos) Create(ctx gl.Context) {
 	x1, y1 := rot(90 - 72)
 	x2, y2 := rot(18 - 72)
 
-	pnt := []f32.Vec2{
-		{0, m},
-		{x1, y1},
-		{x2, y2},
-		{-x2, y2},
-		{-x1, y1},
+	pnt := []f32.Vec3{
+		{0, m, 0},
+		{x1, y1, 0},
+		{x2, y2, 0},
+		{-x2, y2, 0},
+		{-x1, y1, 0},
+
+		{0, m, -0.1},
+		{x1, y1, -0.1},
+		{x2, y2, -0.1},
+		{-x2, y2, -0.1},
+		{-x1, y1, -0.1},
 	}
-	pts := []f32.Vec2{
+	pts := []f32.Vec3{
 		{0, m},
 		{x1, y1},
 		{x2, y2},
@@ -75,12 +156,12 @@ func (chs *Chaos) Create(ctx gl.Context) {
 		{-x1, y1},
 	}
 
-	midpoint := func(s, e f32.Vec2) f32.Vec2 {
-		return f32.Vec2{(s[0] + e[0]) / 2, (s[1] + e[1]) / 2}
+	midpoint := func(a, b f32.Vec3) f32.Vec3 {
+		return f32.Vec3{(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2}
 	}
 
 	game := func(sx, sy float32, n int) {
-		at := f32.Vec2{sx, sy}
+		at := f32.Vec3{sx, sy}
 		pts = append(pts, at)
 		for i := 0; i < n; i++ {
 			at = midpoint(at, pnt[rand.Intn(len(pnt))])
@@ -94,7 +175,8 @@ func (chs *Chaos) Create(ctx gl.Context) {
 	for i, pt := range pts {
 		verts[nverts*i] = pt[0]
 		verts[nverts*i+1] = pt[1]
-		verts[nverts*i+2] = (float32(rand.Intn(100)) / float32(100)) - 0.5
+		verts[nverts*i+2] = pt[2]
+		// verts[nverts*i+2] = (float32(rand.Intn(100)) / float32(100)) - 0.5
 	}
 
 	// indices := make([]uint32, len(verts))

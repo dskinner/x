@@ -95,6 +95,15 @@ func (a Transform) Lerp(b Transform, t float32) Transform {
 	}
 }
 
+func (a Transform) Lerp4(b Transform, t, u, v, w float32) Transform {
+	return Transform{
+		Translate: lerp3fv(a.Translate, b.Translate, t),
+		Shear:     lerp3fv(a.Shear, b.Shear, u),
+		Scale:     lerp3fv(a.Scale, b.Scale, v),
+		Rotate:    lerp4fv(a.Rotate, b.Rotate, w),
+	}
+}
+
 func (a Transform) Eval16fv() (m f32.Mat4) {
 	t := translationIdent(a.Translate, a.Shear)
 	r := quat16fv(a.Rotate)
@@ -148,6 +157,13 @@ type Animator struct {
 
 	// TODO epochs for each transform type (translate, rotate, etc) so each operates independently
 	epoch time.Time
+
+	epochs struct {
+		translate time.Time
+		shear     time.Time
+		scale     time.Time
+		rotate    time.Time
+	}
 
 	dur    time.Duration
 	interp func(float64) float64
@@ -221,6 +237,20 @@ func (a *Animator) Stage(epoch time.Time, transforms ...func(Transformer)) {
 // 	// a.at = a.pt
 // 	// a.to = a.pt
 // }
+
+func (a *Animator) stepEach(now time.Time) (ok bool) {
+	if a.epoch == (time.Time{}) {
+		return false
+	}
+	since := now.Sub(a.epoch)
+	if ok = since < a.dur; ok {
+		delta := float32(a.interp(float64(since) / float64(a.dur)))
+		a.pt = a.at.Lerp(a.to, delta)
+	} else {
+		a.Done()
+	}
+	return ok
+}
 
 func (a *Animator) Step(now time.Time) (ok bool) {
 	if a.epoch == (time.Time{}) {

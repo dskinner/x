@@ -25,14 +25,14 @@ uniform mat4 model;
 attribute vec2 vert;
 
 void main() {
-	gl_Position = proj * model * vec4(vert.x, vert.y, 0.0f, 1.0f);
+	gl_Position = proj * model * vec4(vert.x, vert.y, 0.0, 1.0);
 }`
 
 const fsrc = `#version 100
 precision mediump float;
 
 void main() {
-	gl_FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
+	gl_FragColor = vec4(1.0, 0.5, 0.2, 1.0);
 }`
 
 func export(path string, img *image.RGBA) {
@@ -267,6 +267,7 @@ func main() {
 	app.Main(func(a app.App) {
 		var glctx gl.Context3
 		gef := gesture.EventFilter{Send: a.Send}
+		// a.RegisterFilter(gef.Filter)
 
 		for e := range a.Events() {
 			if e = gef.Filter(e); e == nil {
